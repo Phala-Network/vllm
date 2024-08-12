@@ -42,11 +42,19 @@ from vllm.usage.usage_lib import UsageContext
 from vllm.utils import FlexibleArgumentParser, get_open_port
 from vllm.version import __version__ as VLLM_VERSION
 
+import web3, eth_utils
+from hashlib import sha256
+from verifier import cc_admin
+import base64, json
+
 TIMEOUT_KEEP_ALIVE = 5  # seconds
 
 chat_0: OpenAIServingChat
 chat_1: OpenAIServingChat
 chat_2: OpenAIServingChat
+
+signing_address: str
+nvidia_payload: str
 
 logger = init_logger('vllm.entrypoints.openai.api_server')
 
@@ -101,6 +109,14 @@ async def create_chat_completion(
     else:
         assert isinstance(generator, ChatCompletionResponse)
         return JSONResponse(content=generator.model_dump())
+
+
+@router.get("/v1/attestation/report")
+async def create_attestation_report():
+    return JSONResponse(content={
+        "signing_address": signing_address,
+        "nvidia_payload": nvidia_payload,
+    })
 
 
 def build_app(args: Namespace) -> FastAPI:
@@ -202,9 +218,33 @@ async def init_app(
         return_tokens_as_token_ids=args.return_tokens_as_token_ids,
     )
 
+    w3 = web3.Web3()
+    raw_acct = w3.eth.account.create()
+    pub_keccak = eth_utils.keccak(raw_acct._key_obj.public_key.to_bytes()).hex()
+    gpu_evidence = cc_admin.collect_gpu_evidence(pub_keccak)[0]
+
+    global signing_address
+    signing_address = raw_acct.address
+
+    global nvidia_payload
+    nvidia_payload = build_payload(pub_keccak, gpu_evidence['attestationReportHexStr'], gpu_evidence['certChainBase64Encoded'])
+
     app.root_path = args.root_path
 
     return app
+
+
+def build_payload(nonce, evidence, cert_chain):
+    data = dict()
+    data['nonce'] = nonce
+    encoded_evidence_bytes = evidence.encode("ascii")
+    encoded_evidence = base64.b64encode(encoded_evidence_bytes)
+    encoded_evidence = encoded_evidence.decode('utf-8')
+    data['evidence'] = encoded_evidence
+    data['arch'] = 'HOPPER'
+    data['certificate'] = str(cert_chain)
+    payload = json.dumps(data)
+    return payload
 
 
 async def run_server(args, args1, args2, **uvicorn_kwargs) -> None:
