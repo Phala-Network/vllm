@@ -165,7 +165,7 @@ class OpenAIServing:
         self,
         request: AnyRequest,
     ) -> Optional[ErrorResponse]:
-        if request.model in self.served_model_names:
+        if request.model.lower() in self.served_model_names:
             return None
         if request.model in [lora.lora_name for lora in self.lora_requests]:
             return None
