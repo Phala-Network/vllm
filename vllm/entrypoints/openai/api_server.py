@@ -123,8 +123,8 @@ async def create_attestation_report():
     })
 
 
-@router.get("/v1/signing/{request_id}")
-async def get_signing(request_id):
+@router.get("/v1/signature/{request_id}")
+async def get_signature(request_id):
     global all_chats, raw_acct
     return JSONResponse(content = {
         "text": all_chats[request_id],
