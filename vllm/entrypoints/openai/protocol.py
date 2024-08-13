@@ -626,6 +626,7 @@ class ChatCompletionResponse(OpenAIBaseModel):
     model: str
     choices: List[ChatCompletionResponseChoice]
     usage: UsageInfo
+    signature: Optional[str] = None
 
 
 class DeltaMessage(OpenAIBaseModel):

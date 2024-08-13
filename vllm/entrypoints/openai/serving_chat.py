@@ -31,6 +31,8 @@ from vllm.tracing import (contains_trace_headers, extract_trace_headers,
                           log_tracing_disabled_warning)
 from vllm.utils import random_uuid
 
+import eth_account
+
 logger = init_logger(__name__)
 
 
@@ -65,7 +67,10 @@ class OpenAIServingChat(OpenAIServing):
     async def create_chat_completion(
         self,
         request: ChatCompletionRequest,
-        raw_request: Optional[Request] = None
+        raw_request: Optional[Request] = None,
+        raw_acct: any = None,
+        signing_mode: str = None,
+        all_chats: dict[str, object] = None,
     ) -> Union[ErrorResponse, AsyncGenerator[str, None],
                ChatCompletionResponse]:
         """Completion API similar to OpenAI's API.
@@ -184,7 +189,7 @@ class OpenAIServingChat(OpenAIServing):
             try:
                 return await self.chat_completion_full_generator(
                     request, raw_request, result_generator, request_id,
-                    conversation, tokenizer)
+                    conversation, tokenizer, raw_acct, signing_mode, all_chats)
             except ValueError as e:
                 # TODO: Use a vllm-specific Validation Error
                 return self.create_error_response(str(e))
@@ -427,6 +432,9 @@ class OpenAIServingChat(OpenAIServing):
         request_id: str,
         conversation: List[ConversationMessage],
         tokenizer: PreTrainedTokenizer,
+        raw_acct,
+        signing_mode: str,
+        all_chats: dict[str, object],
     ) -> Union[ErrorResponse, ChatCompletionResponse]:
 
         model_name = self.served_model_names[0]
@@ -505,6 +513,20 @@ class OpenAIServingChat(OpenAIServing):
             choices=choices,
             usage=usage,
         )
+
+        if signing_mode == 'StandaloneApi':
+            res_dict = []
+            for choice in choices:
+                res_dict.append(choice.model_dump())
+            import json
+            all_chats[request_id] = json.dumps(request.messages) + "\n" + json.dumps(res_dict)
+        elif signing_mode == 'ModifiedResponse':
+            res_dict = []
+            for choice in choices:
+                res_dict.append(choice.model_dump())
+            import json
+            content = json.dumps(request.messages) + "\n" + json.dumps(res_dict)
+            response.signature = raw_acct.sign_message(eth_account.messages.encode_defunct(text = content)).signature.hex()
 
         return response
 

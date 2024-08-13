@@ -42,7 +42,7 @@ from vllm.usage.usage_lib import UsageContext
 from vllm.utils import FlexibleArgumentParser, get_open_port
 from vllm.version import __version__ as VLLM_VERSION
 
-import web3, eth_utils
+import web3, eth_utils, eth_account
 from hashlib import sha256
 from verifier import cc_admin
 import base64, json
@@ -55,6 +55,8 @@ chat_2: OpenAIServingChat
 
 signing_address: str
 nvidia_payload: str
+
+all_chats = dict[str, object]
 
 logger = init_logger('vllm.entrypoints.openai.api_server')
 
@@ -98,8 +100,10 @@ async def create_chat_completion(
     else:
         chat = chat_2
 
+    global raw_acct, all_chats
+    signing_mode = raw_request.headers.get('x-phala-signature-type')
     generator = await chat.create_chat_completion(
-        request, raw_request)
+        request, raw_request, raw_acct, signing_mode, all_chats)
     if isinstance(generator, ErrorResponse):
         return JSONResponse(content=generator.model_dump(),
                             status_code=generator.code)
@@ -108,7 +112,7 @@ async def create_chat_completion(
                                  media_type="text/event-stream")
     else:
         assert isinstance(generator, ChatCompletionResponse)
-        return JSONResponse(content=generator.model_dump())
+        return JSONResponse(content=generator.model_dump(exclude_none=True))
 
 
 @router.get("/v1/attestation/report")
@@ -116,6 +120,15 @@ async def create_attestation_report():
     return JSONResponse(content={
         "signing_address": signing_address,
         "nvidia_payload": nvidia_payload,
+    })
+
+
+@router.get("/v1/signing/{request_id}")
+async def get_signing(request_id):
+    global all_chats, raw_acct
+    return JSONResponse(content = {
+        "text": all_chats[request_id],
+        "signature": raw_acct.sign_message(eth_account.messages.encode_defunct(text = all_chats[request_id])).signature.hex()
     })
 
 
@@ -219,6 +232,7 @@ async def init_app(
     )
 
     w3 = web3.Web3()
+    global raw_acct
     raw_acct = w3.eth.account.create()
     pub_keccak = eth_utils.keccak(raw_acct._key_obj.public_key.to_bytes()).hex()
     gpu_evidence = cc_admin.collect_gpu_evidence(pub_keccak)[0]
@@ -228,6 +242,9 @@ async def init_app(
 
     global nvidia_payload
     nvidia_payload = build_payload(pub_keccak, gpu_evidence['attestationReportHexStr'], gpu_evidence['certChainBase64Encoded'])
+
+    global all_chats
+    all_chats = dict()
 
     app.root_path = args.root_path
 
