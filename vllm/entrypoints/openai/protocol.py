@@ -114,6 +114,22 @@ class ChatCompletionNamedToolChoiceParam(OpenAIBaseModel):
 
 
 class ChatCompletionRequest(OpenAIBaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {
+            "model": "meta-llama/meta-llama-3.1-8b-instruct",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant."
+                },
+                {
+                    "role": "user",
+                    "content": "What is your model name?"
+                }
+            ]
+        }
+    ]})
+
     # Ordered by official OpenAI API documentation
     # https://platform.openai.com/docs/api-reference/chat/create
     messages: List[ChatCompletionMessageParam]
@@ -620,6 +636,21 @@ class ChatCompletionResponseChoice(OpenAIBaseModel):
 
 
 class ChatCompletionResponse(OpenAIBaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {
+            "model": "meta-llama/meta-llama-3.1-8b-instruct",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant."
+                },
+                {
+                    "role": "user",
+                    "content": "What is your model name?"
+                }
+            ]
+        }
+    ]})
     id: str = Field(default_factory=lambda: f"chatcmpl-{random_uuid()}")
     object: Literal["chat.completion"] = "chat.completion"
     created: int = Field(default_factory=lambda: int(time.time()))

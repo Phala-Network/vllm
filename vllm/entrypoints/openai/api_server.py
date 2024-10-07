@@ -6,9 +6,10 @@ from argparse import Namespace
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from multiprocessing import Process
-from typing import AsyncIterator, List, Set
+from typing import AsyncIterator, List, Set, Annotated
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Header, Request, Response, Path
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -27,12 +28,7 @@ from vllm.entrypoints.openai.cli_args import make_arg_parser
 # yapf: disable
 from vllm.entrypoints.openai.protocol import (ChatCompletionRequest,
                                               ChatCompletionResponse,
-                                              CompletionRequest,
-                                              DetokenizeRequest,
-                                              DetokenizeResponse,
-                                              EmbeddingRequest, ErrorResponse,
-                                              TokenizeRequest,
-                                              TokenizeResponse)
+                                              ErrorResponse)
 from vllm.entrypoints.openai.rpc.client import AsyncEngineRPCClient
 from vllm.entrypoints.openai.rpc.server import run_rpc_server
 # yapf: enable
@@ -88,11 +84,44 @@ def mount_metrics(app: FastAPI):
     app.routes.append(metrics_route)
 
 
-@router.post("/v1/chat/completions")
+@router.post("/v1/chat/completions", responses={
+    200: {
+        "content": {
+            "application/json": {
+                "example": {
+  "id": "chat-ab1aa731c64347558cc8ba1ad8c9ca32",
+  "object": "chat.completion",
+  "created": 1723517431,
+  "model": "meta-llama/meta-llama-3.1-8b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "I don't have a personal model name, but I'm a variant of the LLaMA (Large Language Model Application) model, which is a type of artificial intelligence designed to understand and generate human-like text. I'm a helpful assistant, and I'm here to assist you with any questions or tasks you may have!",
+        "tool_calls": []
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 27,
+    "total_tokens": 93,
+    "completion_tokens": 66
+  },
+  "signature": "0xd9533aab32865f2168189935730858a87ab1cba63d35faef3d8311b5013fa9da4b42c2726444f550406378b1980c34c3ac192dc5159179e7dafc2d90e5ccde7a1c"
+                }
+            }
+        }
+    }
+},
+    summary="Creates a model response for the given that conversation.",
+    description="Given a list of messages comprising a conversation, the model will return a response.\n\nCurrently, we support `meta-llama/meta-llama-3.1-8b-instruct`, `google/gemma-2-9b-it` and `microsoft/phi-3-mini-4k-instruct` as the model.")
 async def create_chat_completion(
     request: ChatCompletionRequest,
-    raw_request: Request
-):
+    raw_request: Request,
+    x_phala_signature_type: Annotated[str | None, Header(description="StandaloneApi or ModifiedResponse. If other value is set, will not have signature", example="ModifiedResponse")] = None
+) -> Response:
     if request.model.lower() == "meta-llama/meta-llama-3.1-8b-instruct":
         chat = chat_0
     elif request.model.lower() == "google/gemma-2-9b-it":
@@ -101,21 +130,31 @@ async def create_chat_completion(
         chat = chat_2
 
     global raw_acct, all_chats
-    signing_mode = raw_request.headers.get('x-phala-signature-type')
     generator = await chat.create_chat_completion(
-        request, raw_request, raw_acct, signing_mode, all_chats)
+        request, raw_request, raw_acct, x_phala_signature_type, all_chats)
     if isinstance(generator, ErrorResponse):
         return JSONResponse(content=generator.model_dump(),
                             status_code=generator.code)
-    if request.stream:
-        return StreamingResponse(content=generator,
-                                 media_type="text/event-stream")
-    else:
+    if not request.stream:
         assert isinstance(generator, ChatCompletionResponse)
         return JSONResponse(content=generator.model_dump(exclude_none=True))
+    else:
+        return StreamingResponse(content=generator,
+                                 media_type="text/event-stream")
 
 
-@router.get("/v1/attestation/report")
+@router.get("/v1/attestation/report", summary="Get the signing key address and create the nvidia attestation payload.", responses={
+    200: {
+        "content": {
+            "application/json": {
+                "example": {
+                    "signing_address": "...",
+                    "nvidia_payload": "..."
+                }
+            }
+        }
+    }
+})
 async def create_attestation_report():
     return JSONResponse(content={
         "signing_address": signing_address,
@@ -123,12 +162,23 @@ async def create_attestation_report():
     })
 
 
-@router.get("/v1/signature/{request_id}")
-async def get_signature(request_id):
+@router.get("/v1/signature/{chat_id}", summary="Get the signature for chat_completion if the SignatureType is StandaloneApi", responses={
+    200: {
+        "content": {
+            "application/json": {
+                "example": {
+                    "text": "[{\"content\": \"You are a helpful assistant.\", \"role\": \"system\"}, {\"content\": \"What is your model name?\", \"role\": \"user\"}]\n[{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"I don't have a specific model name, as I'm a large language model, I'm a part of a broader AI system. However, I'm a variant of the popular language model, Llama (Large Language Model Meta AI).\", \"tool_calls\": []}, \"logprobs\": null, \"finish_reason\": \"stop\", \"stop_reason\": null}]",
+                    "signature": "0xa3de1510a0537897688509a1a7ea78802fd2e8d35c54844b52815720233f016e3bb4853a4c0ac72ee899dd11d91feaf3ad8daa1d4518b4e22cad2a9f57026eee1b"
+                }
+            }
+        }
+    }
+})
+async def get_signature(chat_id: Annotated[str, Path(description="chat_id from the chat_completion", example="chatcmpl-ab1aa731c64347558cc8ba1ad8c9ca32")]):
     global all_chats, raw_acct
     return JSONResponse(content = {
-        "text": all_chats[request_id],
-        "signature": raw_acct.sign_message(eth_account.messages.encode_defunct(text = all_chats[request_id])).signature.hex()
+        "text": all_chats[chat_id],
+        "signature": raw_acct.sign_message(eth_account.messages.encode_defunct(text = all_chats[chat_id])).signature.hex()
     })
 
 
