@@ -217,6 +217,31 @@ def build_app(args: Namespace) -> FastAPI:
                                     status_code=401)
             return await call_next(request)
 
+    @app.middleware("http")
+    async def signature(request: Request, call_next):
+        root_path = "" if args.root_path is None else args.root_path
+        if request.url.path.startswith(f"{root_path}/v1/chat/completions"):
+            h = sha256()
+            h.update(await request.body())
+            request_sha256 = h.digest().hex()
+
+            response = await call_next(request)
+
+            h = sha256()
+            original_iterator = response.body_iterator
+            async def new_iterator():
+                async for chunk in original_iterator:
+                    h.update(chunk)
+                    print(chunk)
+                    yield chunk
+                response_sha256 = h.hexdigest()
+                global all_chats
+                all_chats[request.state.request_id] = request_sha256 + ':' + response_sha256
+            response.body_iterator = new_iterator()
+
+            return response
+        return await call_next(request)
+
     for middleware in args.middleware:
         module_path, object_name = middleware.rsplit(".", 1)
         imported = getattr(importlib.import_module(module_path), object_name)
