@@ -35,7 +35,7 @@ from vllm.entrypoints.openai.rpc.server import run_rpc_server
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from vllm.logger import init_logger
 from vllm.usage.usage_lib import UsageContext
-from vllm.utils import FlexibleArgumentParser, get_open_port
+from vllm.utils import FlexibleArgumentParser, get_open_port, random_uuid
 from vllm.version import __version__ as VLLM_VERSION
 
 import web3, eth_utils, eth_account
@@ -129,9 +129,9 @@ async def create_chat_completion(
     else:
         chat = chat_2
 
-    global raw_acct, all_chats
+    global raw_acct
     generator = await chat.create_chat_completion(
-        request, raw_request, raw_acct, x_phala_signature_type, all_chats)
+        request, raw_request, raw_acct, x_phala_signature_type)
     if isinstance(generator, ErrorResponse):
         return JSONResponse(content=generator.model_dump(),
                             status_code=generator.code)
@@ -227,6 +227,12 @@ def build_app(args: Namespace) -> FastAPI:
 
             response = await call_next(request)
 
+            if hasattr(request.state, 'request_id'):
+                request_id = request.state.request_id
+            else:
+                request_id = f"undefined-{random_uuid()}"
+            response.headers["x-phala-request-id"] = request_id
+
             h = sha256()
             original_iterator = response.body_iterator
             async def new_iterator():
@@ -236,7 +242,7 @@ def build_app(args: Namespace) -> FastAPI:
                     yield chunk
                 response_sha256 = h.hexdigest()
                 global all_chats
-                all_chats[request.state.request_id] = request_sha256 + ':' + response_sha256
+                all_chats[request_id] = request_sha256 + ':' + response_sha256
             response.body_iterator = new_iterator()
 
             return response

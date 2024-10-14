@@ -70,7 +70,6 @@ class OpenAIServingChat(OpenAIServing):
         raw_request: Optional[Request] = None,
         raw_acct: any = None,
         signing_mode: str = None,
-        all_chats: dict[str, object] = None,
     ) -> Union[ErrorResponse, AsyncGenerator[str, None],
                ChatCompletionResponse]:
         """Completion API similar to OpenAI's API.
@@ -190,7 +189,7 @@ class OpenAIServingChat(OpenAIServing):
             try:
                 return await self.chat_completion_full_generator(
                     request, raw_request, result_generator, request_id,
-                    conversation, tokenizer, raw_acct, signing_mode, all_chats)
+                    conversation, tokenizer, raw_acct, signing_mode)
             except ValueError as e:
                 # TODO: Use a vllm-specific Validation Error
                 return self.create_error_response(str(e))
@@ -435,7 +434,6 @@ class OpenAIServingChat(OpenAIServing):
         tokenizer: PreTrainedTokenizer,
         raw_acct,
         signing_mode: str,
-        all_chats: dict[str, object],
     ) -> Union[ErrorResponse, ChatCompletionResponse]:
 
         model_name = self.served_model_names[0]
@@ -515,13 +513,7 @@ class OpenAIServingChat(OpenAIServing):
             usage=usage,
         )
 
-        if signing_mode == 'StandaloneApi':
-            res_dict = []
-            for choice in choices:
-                res_dict.append(choice.model_dump())
-            import json
-            all_chats[request_id] = json.dumps(request.messages) + "\n" + json.dumps(res_dict)
-        elif signing_mode == 'ModifiedResponse':
+        if signing_mode == 'ModifiedResponse':
             res_dict = []
             for choice in choices:
                 res_dict.append(choice.model_dump())
