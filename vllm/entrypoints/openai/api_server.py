@@ -42,6 +42,7 @@ import web3, eth_utils, eth_account
 from hashlib import sha256
 from verifier import cc_admin
 import base64, json
+import subprocess
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds
 
@@ -149,7 +150,8 @@ async def create_chat_completion(
             "application/json": {
                 "example": {
                     "signing_address": "...",
-                    "nvidia_payload": "..."
+                    "nvidia_payload": "...",
+                    "intel_quote": "..."
                 }
             }
         }
@@ -159,6 +161,7 @@ async def create_attestation_report():
     return JSONResponse(content={
         "signing_address": signing_address,
         "nvidia_payload": nvidia_payload,
+        "intel_quote": intel_quote,
     })
 
 
@@ -318,6 +321,10 @@ async def init_app(
     pub_keccak = eth_utils.keccak(raw_acct._key_obj.public_key.to_bytes()).hex()
     gpu_evidence = cc_admin.collect_gpu_evidence(pub_keccak)[0]
 
+    global intel_quote
+    quote = subprocess.check_output(["tdx_quote"], input=pub_keccak.encode())
+    intel_quote = base64.b64encode(quote).decode("utf-8")
+
     global signing_address
     signing_address = raw_acct.address
 
@@ -335,12 +342,14 @@ async def init_app(
 def build_payload(nonce, evidence, cert_chain):
     data = dict()
     data['nonce'] = nonce
+    data['arch'] = 'HOPPER'
     encoded_evidence_bytes = evidence.encode("ascii")
     encoded_evidence = base64.b64encode(encoded_evidence_bytes)
     encoded_evidence = encoded_evidence.decode('utf-8')
-    data['evidence'] = encoded_evidence
-    data['arch'] = 'HOPPER'
-    data['certificate'] = str(cert_chain)
+    data['evidence_list'] = [{
+        'evidence': encoded_evidence,
+        'certificate': str(cert_chain)
+    }]
     payload = json.dumps(data)
     return payload
 
