@@ -1,0 +1,27 @@
+FROM vllm/vllm-openai:v0.5.4
+
+ADD openai-patch.tar.gz .
+RUN tar -xzvf openai-patch.tar.gz & mv openai-patch/* /vllm-workspace
+RUN \
+	patch /usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/api_server.py           < /vllm-workspace/vllm_entrypoints_openai_api_server.py.patch & \
+	patch /usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/protocol.py             < /vllm-workspace/vllm_entrypoints_openai_protocol.py.patch & \
+	patch /usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/serving_chat.py         < /vllm-workspace/vllm_entrypoints_openai_serving_chat.py.patch & \
+	patch /usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/serving_completion.py   < /vllm-workspace/vllm_entrypoints_openai_serving_completion.py.patch & \
+	patch /usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/serving_embedding.py    < /vllm-workspace/vllm_entrypoints_openai_serving_embedding.py.patch & \
+	patch /usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/serving_engine.py       < /vllm-workspace/vllm_entrypoints_openai_serving_engine.py.patch & \
+	patch /usr/local/lib/python3.10/dist-packages/vllm/entrypoints/openai/serving_tokenization.py < /vllm-workspace/vllm_entrypoints_openai_serving_tokenization.py.patch & \
+	rm *.patch
+
+RUN dpkg -i libtdx-attest_1.22.100.3-focal1_amd64.deb && rm libtdx-attest_1.22.100.3-focal1_amd64.deb
+
+RUN mv tdx_quote /usr/local/bin
+
+RUN echo "port=4050" > /etc/tdx-attest.conf
+
+RUN cd local_gpu_verifier && pip3 install . && cd .. && rm -r local_gpu_verifier
+
+RUN pip3 install web3 eth-account eth-utils
+
+RUN rm -r openai-patch
+
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
