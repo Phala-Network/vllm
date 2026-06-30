@@ -12,7 +12,11 @@ from PIL import Image
 from vllm.assets.base import get_vllm_public_assets
 from vllm.assets.video import video_to_ndarrays, video_to_pil_images_list
 from vllm.multimodal.media import ImageMediaIO, VideoMediaIO
-from vllm.multimodal.video import VIDEO_LOADER_REGISTRY, VideoLoader
+from vllm.multimodal.video import (
+    VIDEO_LOADER_REGISTRY,
+    VideoLoader,
+    _check_frame_pixel_limit,
+)
 
 from ..utils import cosine_similarity, create_video_from_image, normalize_image
 
@@ -20,6 +24,19 @@ pytestmark = pytest.mark.cpu_test
 
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
 assert ASSETS_DIR.exists()
+
+
+def test_video_frame_pixel_limit(monkeypatch: pytest.MonkeyPatch):
+    import vllm.envs as envs
+
+    monkeypatch.setattr(envs, "VLLM_MAX_IMAGE_PIXELS", 100)
+    _check_frame_pixel_limit(10, 10)
+
+    with pytest.raises(ValueError, match="exceed the maximum"):
+        _check_frame_pixel_limit(11, 10)
+
+    monkeypatch.setattr(envs, "VLLM_MAX_IMAGE_PIXELS", 0)
+    _check_frame_pixel_limit(100_000, 100_000)
 
 
 @VIDEO_LOADER_REGISTRY.register("assert_10_frames_1_fps")
