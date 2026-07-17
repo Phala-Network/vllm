@@ -3,11 +3,11 @@
 ARG BASE_IMAGE=docker.io/vllm/vllm-openai:v0.24.0-cu129-ubuntu2404@sha256:57f2055d534ce925817765a2f0a908027adf4ab6c1f113096a40d38af52f59a6
 FROM ${BASE_IMAGE}
 
-ARG VLLM_BACKPORT_COMMIT=405ffd24eed294045b84724705cddfb0eb67a314
+ARG VLLM_BACKPORT_COMMIT=75e9302ca3bf36441c02228eae1469f835d6efb4
 
 LABEL org.opencontainers.image.source="https://github.com/Phala-Network/vllm" \
       org.opencontainers.image.revision="${VLLM_BACKPORT_COMMIT}" \
-      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.1" \
+      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.2" \
       org.opencontainers.image.description="vLLM v0.24.0 cu129 with Phala request-safety backports"
 
 COPY vllm/sampling_params.py /tmp/phala-overlay/vllm/sampling_params.py
