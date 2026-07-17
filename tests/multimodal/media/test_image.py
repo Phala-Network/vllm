@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+from http import HTTPStatus
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 from PIL import Image
 
+from vllm.entrypoints.serve.utils.error_response import create_error_response
+from vllm.exceptions import VLLMUnprocessableEntityError
 from vllm.multimodal.media import ImageMediaIO
 
 pytestmark = pytest.mark.cpu_test
@@ -239,8 +243,34 @@ def test_image_pixel_limit_rejected(monkeypatch):
     data = buf.getvalue()
 
     image_io = ImageMediaIO()
-    with pytest.raises(ValueError, match="exceed"):
+    with pytest.raises(VLLMUnprocessableEntityError, match="exceed") as exc_info:
         image_io.load_bytes(data)
+
+    assert exc_info.value.parameter == "image_url"
+    response = create_error_response(exc_info.value)
+    assert response.error.code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+def test_pillow_decompression_bomb_rejected_as_unprocessable():
+    """Pillow's header-only pixel guard is mapped without raster allocation."""
+    image_io = ImageMediaIO()
+    bomb_error = Image.DecompressionBombError(
+        "Image size exceeds the Pillow decompression-bomb limit"
+    )
+
+    with (
+        patch(
+            "vllm.multimodal.media.image.Image.open",
+            side_effect=bomb_error,
+        ),
+        pytest.raises(VLLMUnprocessableEntityError) as exc_info,
+    ):
+        image_io.load_bytes(b"header-only-image")
+
+    assert exc_info.value.parameter == "image_url"
+    assert "safe pixel limit" in str(exc_info.value)
+    response = create_error_response(exc_info.value)
+    assert response.error.code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 def test_image_pixel_limit_disabled(monkeypatch):

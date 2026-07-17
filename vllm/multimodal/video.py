@@ -10,6 +10,7 @@ import numpy.typing as npt
 import torch
 
 from vllm import envs
+from vllm.exceptions import VLLMUnprocessableEntityError
 from vllm.logger import init_logger
 from vllm.utils.import_utils import PlaceholderModule
 from vllm.utils.registry import ExtensionManager
@@ -88,11 +89,12 @@ def _check_frame_pixel_limit(width: int, height: int) -> None:
     """Reject video frames exceeding VLLM_MAX_IMAGE_PIXELS before decoding."""
     max_pixels = envs.VLLM_MAX_IMAGE_PIXELS
     if max_pixels > 0 and width * height > max_pixels:
-        raise ValueError(
+        raise VLLMUnprocessableEntityError(
             f"Video frame dimensions {width}x{height} "
             f"({width * height} pixels) exceed the maximum of "
             f"{max_pixels} pixels. Set VLLM_MAX_IMAGE_PIXELS to "
-            f"increase this limit."
+            f"increase this limit.",
+            parameter="video_url",
         )
 
 

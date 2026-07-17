@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import io
+from http import HTTPStatus
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,8 @@ from PIL import Image
 
 from vllm.assets.base import get_vllm_public_assets
 from vllm.assets.video import video_to_ndarrays, video_to_pil_images_list
+from vllm.entrypoints.serve.utils.error_response import create_error_response
+from vllm.exceptions import VLLMUnprocessableEntityError
 from vllm.multimodal.media import ImageMediaIO, VideoMediaIO
 from vllm.multimodal.video import (
     VIDEO_LOADER_REGISTRY,
@@ -32,8 +35,13 @@ def test_video_frame_pixel_limit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(envs, "VLLM_MAX_IMAGE_PIXELS", 100)
     _check_frame_pixel_limit(10, 10)
 
-    with pytest.raises(ValueError, match="exceed the maximum"):
+    with pytest.raises(
+        VLLMUnprocessableEntityError, match="exceed the maximum"
+    ) as exc_info:
         _check_frame_pixel_limit(11, 10)
+    assert exc_info.value.parameter == "video_url"
+    response = create_error_response(exc_info.value)
+    assert response.error.code == HTTPStatus.UNPROCESSABLE_ENTITY
 
     monkeypatch.setattr(envs, "VLLM_MAX_IMAGE_PIXELS", 0)
     _check_frame_pixel_limit(100_000, 100_000)

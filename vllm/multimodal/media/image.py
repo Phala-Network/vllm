@@ -10,6 +10,7 @@ import torch
 from PIL import Image
 
 import vllm.envs as envs
+from vllm.exceptions import VLLMUnprocessableEntityError
 from vllm.utils.serial_utils import tensor2base64
 
 from ..image import convert_image_mode, normalize_image, rgba_to_rgb
@@ -76,14 +77,20 @@ class ImageMediaIO(MediaIO[Image.Image]):
             w, h = image.size
             max_pixels = envs.VLLM_MAX_IMAGE_PIXELS
             if max_pixels > 0 and w * h > max_pixels:
-                raise ValueError(
+                raise VLLMUnprocessableEntityError(
                     f"Image dimensions {w}x{h} ({w * h} pixels) exceed "
                     f"the maximum of {max_pixels} pixels. Set "
-                    f"VLLM_MAX_IMAGE_PIXELS to increase this limit."
+                    f"VLLM_MAX_IMAGE_PIXELS to increase this limit.",
+                    parameter="image_url",
                 )
             image = normalize_image(image)
             image.load()
             image = self._convert_image_mode(image)
+        except Image.DecompressionBombError as e:
+            raise VLLMUnprocessableEntityError(
+                f"Image exceeds the safe pixel limit: {e}",
+                parameter="image_url",
+            ) from e
         except (OSError, Image.UnidentifiedImageError) as e:
             raise ValueError(f"Failed to load image: {e}") from e
         return MediaWithBytes(image, data)
