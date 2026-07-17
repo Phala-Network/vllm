@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BASE_IMAGE=docker.io/vllm/vllm-openai:v0.24.0-cu129-ubuntu2404@sha256:57f2055d534ce925817765a2f0a908027adf4ab6c1f113096a40d38af52f59a6
+FROM ${BASE_IMAGE}
+
+ARG VLLM_BACKPORT_COMMIT=405ffd24eed294045b84724705cddfb0eb67a314
+
+LABEL org.opencontainers.image.source="https://github.com/Phala-Network/vllm" \
+      org.opencontainers.image.revision="${VLLM_BACKPORT_COMMIT}" \
+      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.1" \
+      org.opencontainers.image.description="vLLM v0.24.0 cu129 with Phala request-safety backports"
+
+COPY vllm/sampling_params.py /tmp/phala-overlay/vllm/sampling_params.py
+COPY vllm/envs.py /tmp/phala-overlay/vllm/envs.py
+COPY vllm/multimodal/media/image.py /tmp/phala-overlay/vllm/multimodal/media/image.py
+COPY vllm/multimodal/video.py /tmp/phala-overlay/vllm/multimodal/video.py
+COPY vllm/transformers_utils/processors/nano_nemotron_vl.py /tmp/phala-overlay/vllm/transformers_utils/processors/nano_nemotron_vl.py
+COPY vllm/transformers_utils/processors/nemotron_vl.py /tmp/phala-overlay/vllm/transformers_utils/processors/nemotron_vl.py
+COPY vllm/entrypoints/openai/api_server.py /tmp/phala-overlay/vllm/entrypoints/openai/api_server.py
+COPY vllm/entrypoints/serve/utils/error_response.py /tmp/phala-overlay/vllm/entrypoints/serve/utils/error_response.py
+COPY vllm/exceptions.py /tmp/phala-overlay/vllm/exceptions.py
+COPY vllm/multimodal/media/connector.py /tmp/phala-overlay/vllm/multimodal/media/connector.py
+
+RUN set -eux; \
+    printf '%s\n' \
+      '1ecf8ba062e4044f6e66f65a10ba5564840db30ac70a20490b766f41fee64c00  /usr/local/lib/python3.12/dist-packages/vllm/sampling_params.py' \
+      '1e76ec0ef393d38cd98310e8f6bcf2665741c6c48aa9ec1848c2e08427fc593c  /usr/local/lib/python3.12/dist-packages/vllm/envs.py' \
+      '3eb5d08a8b793cc05e55cb9f407fa363d5d6aae1d0c2706189a022ff4eb409f3  /usr/local/lib/python3.12/dist-packages/vllm/multimodal/media/image.py' \
+      '337cf346c88c85ca8c947219a2ede0880f412312141d6b32ec0000b59e3b7863  /usr/local/lib/python3.12/dist-packages/vllm/multimodal/video.py' \
+      '70d5b1fe5f681ae513e0cfd75217e023e6d326787e035cebe76c3a953ad8a96d  /usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/processors/nano_nemotron_vl.py' \
+      '2e5e96305689eb602d8dd72acc011003d75a89b378a2e77f40c461a136fdaaf1  /usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/processors/nemotron_vl.py' \
+      '61122e2483b73ab9c25707604bbe565516ef4e7caa61c0f7dc785d65083cc322  /usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/api_server.py' \
+      'cdc07e4b6ac987335a6d13785d01ae3bd53a5785f7f6084b0e10a6a8368aea0d  /usr/local/lib/python3.12/dist-packages/vllm/entrypoints/serve/utils/error_response.py' \
+      '880ef53c438d9adf5b9ea20bebc13299a5bf4b97a687827a227769f31d69a391  /usr/local/lib/python3.12/dist-packages/vllm/exceptions.py' \
+      '51cfb958324d633856c70e845965506201bdfc69a97f9fb059e2a6a7e7d44952  /usr/local/lib/python3.12/dist-packages/vllm/multimodal/media/connector.py' \
+      | sha256sum -c -; \
+    for file in \
+      vllm/sampling_params.py \
+      vllm/envs.py \
+      vllm/multimodal/media/image.py \
+      vllm/multimodal/video.py \
+      vllm/transformers_utils/processors/nano_nemotron_vl.py \
+      vllm/transformers_utils/processors/nemotron_vl.py \
+      vllm/entrypoints/openai/api_server.py \
+      vllm/entrypoints/serve/utils/error_response.py \
+      vllm/exceptions.py \
+      vllm/multimodal/media/connector.py; \
+    do \
+      install -m 0644 "/tmp/phala-overlay/${file}" "/usr/local/lib/python3.12/dist-packages/${file}"; \
+      /usr/bin/python3 -m py_compile "/usr/local/lib/python3.12/dist-packages/${file}"; \
+    done; \
+    rm -rf /tmp/phala-overlay
