@@ -409,6 +409,16 @@ async def http_exception_handler(req: Request, exc: HTTPException):
     return JSONResponse(err.model_dump(), status_code=exc.status_code)
 
 
+_MAX_RENDERED_VALIDATION_ERRORS = 20
+
+
+def _format_validation_error(error: object) -> str:
+    """Render a validation error without repeating its offending input."""
+    if isinstance(error, dict):
+        return str({key: value for key, value in error.items() if key != "input"})
+    return str(error)
+
+
 async def validation_exception_handler(req: Request, exc: RequestValidationError):
     if req.app.state.args.log_error_stack:
         logger.exception(
@@ -433,13 +443,17 @@ async def validation_exception_handler(req: Request, exc: RequestValidationError
         if loc:
             param = ".".join(str(part) for part in loc)
 
-    exc_str = str(exc)
-    errors_str = str(errors)
-
-    if errors and errors_str and errors_str != exc_str:
-        message = f"{exc_str} {errors_str}"
+    if errors:
+        count = len(errors)
+        label = "error" if count == 1 else "errors"
+        message = f"{count} validation {label}:\n"
+        shown = errors[:_MAX_RENDERED_VALIDATION_ERRORS]
+        message += "".join(f"  {_format_validation_error(error)}\n" for error in shown)
+        if count > len(shown):
+            message += f"  ... and {count - len(shown)} more\n"
+        message = message.rstrip()
     else:
-        message = exc_str
+        message = "Validation error"
 
     err = ErrorResponse(
         error=ErrorInfo(
