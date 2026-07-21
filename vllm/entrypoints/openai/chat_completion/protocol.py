@@ -699,6 +699,17 @@ class ChatCompletionRequest(OpenAIBaseModel):
     @model_validator(mode="before")
     @classmethod
     def check_logprobs(cls, data):
+        # This validator sees raw request values before Pydantic coercion.
+        # Reject non-numeric values before the comparisons below can raise
+        # TypeError and surface as HTTP 500.
+        for field_name in ("prompt_logprobs", "top_logprobs"):
+            field_value = data.get(field_name)
+            if field_value is not None and not isinstance(field_value, (int, float)):
+                raise VLLMValidationError(
+                    f"`{field_name}` must be an integer.",
+                    parameter=field_name,
+                    value=field_value,
+                )
         if (prompt_logprobs := data.get("prompt_logprobs")) is not None:
             if data.get("stream") and (prompt_logprobs > 0 or prompt_logprobs == -1):
                 raise VLLMValidationError(
