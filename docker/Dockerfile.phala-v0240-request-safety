@@ -3,12 +3,12 @@
 ARG BASE_IMAGE=docker.io/vllm/vllm-openai:v0.24.0-cu129-ubuntu2404@sha256:57f2055d534ce925817765a2f0a908027adf4ab6c1f113096a40d38af52f59a6
 FROM ${BASE_IMAGE}
 
-ARG VLLM_BACKPORT_COMMIT=896bc7700
+ARG VLLM_BACKPORT_COMMIT=810e7024e
 
 LABEL org.opencontainers.image.source="https://github.com/Phala-Network/vllm" \
       org.opencontainers.image.revision="${VLLM_BACKPORT_COMMIT}" \
-      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.3-safety-rc1" \
-      org.opencontainers.image.description="vLLM v0.24.0 cu129 with Phala request-safety backports, safety RC1"
+      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.3-rc2" \
+      org.opencontainers.image.description="vLLM v0.24.0 cu129 with Phala request-safety and correctness backports, RC2"
 
 COPY vllm/sampling_params.py /tmp/phala-overlay/vllm/sampling_params.py
 COPY vllm/envs.py /tmp/phala-overlay/vllm/envs.py
@@ -29,6 +29,14 @@ COPY vllm/v1/structured_output/backend_guidance.py /tmp/phala-overlay/vllm/v1/st
 COPY vllm/entrypoints/openai/chat_completion/protocol.py /tmp/phala-overlay/vllm/entrypoints/openai/chat_completion/protocol.py
 COPY vllm/entrypoints/openai/completion/protocol.py /tmp/phala-overlay/vllm/entrypoints/openai/completion/protocol.py
 COPY vllm/entrypoints/serve/utils/server_utils.py /tmp/phala-overlay/vllm/entrypoints/serve/utils/server_utils.py
+COPY vllm/v1/core/sched/scheduler.py /tmp/phala-overlay/vllm/v1/core/sched/scheduler.py
+COPY vllm/v1/structured_output/__init__.py /tmp/phala-overlay/vllm/v1/structured_output/__init__.py
+COPY vllm/v1/structured_output/request.py /tmp/phala-overlay/vllm/v1/structured_output/request.py
+COPY vllm/v1/structured_output/backend_lm_format_enforcer.py /tmp/phala-overlay/vllm/v1/structured_output/backend_lm_format_enforcer.py
+COPY vllm/v1/structured_output/backend_outlines.py /tmp/phala-overlay/vllm/v1/structured_output/backend_outlines.py
+COPY vllm/v1/structured_output/backend_types.py /tmp/phala-overlay/vllm/v1/structured_output/backend_types.py
+COPY vllm/v1/structured_output/backend_xgrammar.py /tmp/phala-overlay/vllm/v1/structured_output/backend_xgrammar.py
+COPY vllm/parser/gemma4.py /tmp/phala-overlay/vllm/parser/gemma4.py
 
 RUN set -eux; \
     printf '%s\n' \
@@ -51,6 +59,14 @@ RUN set -eux; \
       '4da7062753a0d78c75c7b887461834b6f3e0e79fb8df95e0fe41f24060c651f5  /usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/chat_completion/protocol.py' \
       'd971ddc235cb65134f102ec1d5a58bf087db4edc246262b09488b0bbd301c3b1  /usr/local/lib/python3.12/dist-packages/vllm/entrypoints/openai/completion/protocol.py' \
       '48c0dc412d0c8c8ea1bc12f0342a8812d3844e553c837a70ec20a594830ac3cb  /usr/local/lib/python3.12/dist-packages/vllm/entrypoints/serve/utils/server_utils.py' \
+      'df78076164fe02a63876d7690cefac810f1ba4d8fb58afc15e786c1608064090  /usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py' \
+      'df5f2f2ecff776829549438ee6a7fb3341d91a3c5babac5475df44984eed72ee  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/__init__.py' \
+      '704c1a4b10669f469d6a963dfe3adf7f4c1abb2307cdd8772fc54e00cb4182d9  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/request.py' \
+      'e17f19d1f84859273f1057df34866d9c8bcba621e1ab86efd2c4dc0f12227a48  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_lm_format_enforcer.py' \
+      'd6a4f0d00fd0d105889f830925935345fb06c5308e13c7f8ffedf84a47a09fd3  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_outlines.py' \
+      'ef53df77d54e2cd0a833ca324621b600504d6c81ab1ae4706e8eac0b45eaad14  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_types.py' \
+      '231f6b9d7dab5e8d68aba486fa5912db99f8bdd3f9d8842ee3e0bb12bdb7cb67  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_xgrammar.py' \
+      '1335c916a2d64262d4c18e5d2c599ec10a87f9b1003b87805c48adac1a5af050  /usr/local/lib/python3.12/dist-packages/vllm/parser/gemma4.py' \
       | sha256sum -c -; \
     for file in \
       vllm/sampling_params.py \
@@ -71,7 +87,15 @@ RUN set -eux; \
       vllm/v1/structured_output/backend_guidance.py \
       vllm/entrypoints/openai/chat_completion/protocol.py \
       vllm/entrypoints/openai/completion/protocol.py \
-      vllm/entrypoints/serve/utils/server_utils.py; \
+      vllm/entrypoints/serve/utils/server_utils.py \
+      vllm/v1/core/sched/scheduler.py \
+      vllm/v1/structured_output/__init__.py \
+      vllm/v1/structured_output/request.py \
+      vllm/v1/structured_output/backend_lm_format_enforcer.py \
+      vllm/v1/structured_output/backend_outlines.py \
+      vllm/v1/structured_output/backend_types.py \
+      vllm/v1/structured_output/backend_xgrammar.py \
+      vllm/parser/gemma4.py; \
     do \
       install -m 0644 "/tmp/phala-overlay/${file}" "/usr/local/lib/python3.12/dist-packages/${file}"; \
       /usr/bin/python3 -m py_compile "/usr/local/lib/python3.12/dist-packages/${file}"; \
