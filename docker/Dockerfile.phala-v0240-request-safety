@@ -7,7 +7,7 @@ ARG VLLM_BACKPORT_COMMIT
 
 LABEL org.opencontainers.image.source="https://github.com/Phala-Network/vllm" \
       org.opencontainers.image.revision="${VLLM_BACKPORT_COMMIT}" \
-      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.5" \
+      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.6" \
       org.opencontainers.image.description="vLLM v0.24.0 cu129 with Phala request-safety, correctness, and parser backports"
 
 RUN test -n "${VLLM_BACKPORT_COMMIT}"
