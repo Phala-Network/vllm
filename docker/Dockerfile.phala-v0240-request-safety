@@ -7,8 +7,8 @@ ARG VLLM_BACKPORT_COMMIT
 
 LABEL org.opencontainers.image.source="https://github.com/Phala-Network/vllm" \
       org.opencontainers.image.revision="${VLLM_BACKPORT_COMMIT}" \
-      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.3" \
-      org.opencontainers.image.description="vLLM v0.24.0 cu129 with Phala request-safety and correctness backports"
+      org.opencontainers.image.version="v0.24.0-cu129-ubuntu2404-phala.5" \
+      org.opencontainers.image.description="vLLM v0.24.0 cu129 with Phala request-safety, correctness, and parser backports"
 
 RUN test -n "${VLLM_BACKPORT_COMMIT}"
 
@@ -38,6 +38,11 @@ COPY vllm/v1/structured_output/backend_lm_format_enforcer.py /tmp/phala-overlay/
 COPY vllm/v1/structured_output/backend_outlines.py /tmp/phala-overlay/vllm/v1/structured_output/backend_outlines.py
 COPY vllm/v1/structured_output/backend_types.py /tmp/phala-overlay/vllm/v1/structured_output/backend_types.py
 COPY vllm/v1/structured_output/backend_xgrammar.py /tmp/phala-overlay/vllm/v1/structured_output/backend_xgrammar.py
+COPY vllm/parser/abstract_parser.py /tmp/phala-overlay/vllm/parser/abstract_parser.py
+COPY vllm/parser/engine/parser_engine.py /tmp/phala-overlay/vllm/parser/engine/parser_engine.py
+COPY vllm/parser/engine/parser_engine_config.py /tmp/phala-overlay/vllm/parser/engine/parser_engine_config.py
+COPY vllm/parser/engine/streaming_parser_engine.py /tmp/phala-overlay/vllm/parser/engine/streaming_parser_engine.py
+COPY vllm/parser/engine/token_id_scanner.py /tmp/phala-overlay/vllm/parser/engine/token_id_scanner.py
 COPY vllm/parser/gemma4.py /tmp/phala-overlay/vllm/parser/gemma4.py
 
 RUN set -eux; \
@@ -68,6 +73,11 @@ RUN set -eux; \
       'd6a4f0d00fd0d105889f830925935345fb06c5308e13c7f8ffedf84a47a09fd3  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_outlines.py' \
       'ef53df77d54e2cd0a833ca324621b600504d6c81ab1ae4706e8eac0b45eaad14  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_types.py' \
       '231f6b9d7dab5e8d68aba486fa5912db99f8bdd3f9d8842ee3e0bb12bdb7cb67  /usr/local/lib/python3.12/dist-packages/vllm/v1/structured_output/backend_xgrammar.py' \
+      '365ea8d2e7c1cf982bfb0b3f2ece33c7543a73a3c782dbb6fd41d4797cbf6b54  /usr/local/lib/python3.12/dist-packages/vllm/parser/abstract_parser.py' \
+      '9f93d5beb6011a8dbc12b8dff07be6d8cdb22798c4a4686eaa81fa2d1828f5ab  /usr/local/lib/python3.12/dist-packages/vllm/parser/engine/parser_engine.py' \
+      'fc99086bc76bf828d2d00620fd02cf0d52137d93c122dad18b6669c746711ea3  /usr/local/lib/python3.12/dist-packages/vllm/parser/engine/parser_engine_config.py' \
+      'f05059ee2675bab8ea21c2ff26b88349c5046b6282a9c35d56025a502791f957  /usr/local/lib/python3.12/dist-packages/vllm/parser/engine/streaming_parser_engine.py' \
+      '86e73516457e32e166858cd56df5072513a2c6add47ef7cb88a410b29d5c31bf  /usr/local/lib/python3.12/dist-packages/vllm/parser/engine/token_id_scanner.py' \
       '1335c916a2d64262d4c18e5d2c599ec10a87f9b1003b87805c48adac1a5af050  /usr/local/lib/python3.12/dist-packages/vllm/parser/gemma4.py' \
       | sha256sum -c -; \
     for file in \
@@ -97,6 +107,11 @@ RUN set -eux; \
       vllm/v1/structured_output/backend_outlines.py \
       vllm/v1/structured_output/backend_types.py \
       vllm/v1/structured_output/backend_xgrammar.py \
+      vllm/parser/abstract_parser.py \
+      vllm/parser/engine/parser_engine.py \
+      vllm/parser/engine/parser_engine_config.py \
+      vllm/parser/engine/streaming_parser_engine.py \
+      vllm/parser/engine/token_id_scanner.py \
       vllm/parser/gemma4.py; \
     do \
       install -m 0644 "/tmp/phala-overlay/${file}" "/usr/local/lib/python3.12/dist-packages/${file}"; \
