@@ -120,6 +120,46 @@ class TestGemma4ChatTemplate:
         assert "<tool|>" in result
         assert '<|"|>City name<|"|>' in result
 
+    def test_tool_choice_none_guard_when_tools_were_excluded(
+        self, gemma4_template
+    ):
+        messages = [
+            {"role": "user", "content": "Use get_weather for Paris."},
+        ]
+        result = _render(
+            gemma4_template,
+            messages,
+            tools=None,
+            tools_excluded_for_tool_choice_none=True,
+            add_generation_prompt=True,
+        )
+        assert "<|turn>system\n" in result
+        assert "No tools are available for this response." in result
+        assert "Do not emit a tool call." in result
+        assert "<|tool>" not in result
+        assert "Use get_weather for Paris." in result
+
+    def test_tool_choice_none_guard_follows_existing_system_message(
+        self, gemma4_template
+    ):
+        messages = [
+            {"role": "system", "content": "You are concise."},
+            {"role": "user", "content": "Use get_weather for Paris."},
+        ]
+        result = _render(
+            gemma4_template,
+            messages,
+            tools_excluded_for_tool_choice_none=True,
+        )
+        assert "You are concise.\nNo tools are available" in result
+
+    def test_plain_chat_does_not_receive_tool_choice_none_guard(
+        self, gemma4_template
+    ):
+        messages = [{"role": "user", "content": "Hello"}]
+        result = _render(gemma4_template, messages, add_generation_prompt=True)
+        assert "No tools are available for this response." not in result
+
     def test_tool_calls_in_assistant(self, gemma4_template):
         messages = [
             {"role": "user", "content": "Weather in London?"},

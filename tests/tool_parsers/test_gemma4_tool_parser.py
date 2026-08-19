@@ -123,8 +123,7 @@ def mock_request():
 
 
 class TestParseGemma4Args:
-    """Values are returned as strings; type coercion to proper JSON types
-    happens at the engine layer."""
+    """Bare values are converted to their JSON types (int, float, bool, None)."""
 
     def test_empty_string(self):
         assert _parse_gemma4_args("") == {}
@@ -148,23 +147,23 @@ class TestParseGemma4Args:
 
     def test_integer_value(self):
         result = _parse_gemma4_args("count:42")
-        assert result == {"count": "42"}
+        assert result == {"count": 42}
 
     def test_float_value(self):
         result = _parse_gemma4_args("score:3.14")
-        assert result == {"score": "3.14"}
+        assert result == {"score": 3.14}
 
     def test_boolean_true(self):
         result = _parse_gemma4_args("flag:true")
-        assert result == {"flag": "true"}
+        assert result == {"flag": True}
 
     def test_boolean_false(self):
         result = _parse_gemma4_args("flag:false")
-        assert result == {"flag": "false"}
+        assert result == {"flag": False}
 
     def test_null_value(self):
         result = _parse_gemma4_args("param:null")
-        assert result == {"param": "null"}
+        assert result == {"param": None}
 
     def test_mixed_types(self):
         result = _parse_gemma4_args(
@@ -172,9 +171,9 @@ class TestParseGemma4Args:
         )
         assert result == {
             "name": "test",
-            "count": "42",
-            "active": "true",
-            "score": "3.14",
+            "count": 42,
+            "active": True,
+            "score": 3.14,
         }
 
     def test_nested_object(self):
@@ -194,7 +193,7 @@ class TestParseGemma4Args:
         assert result == {"outer": {"inner": "val"}}
 
         result = _parse_gemma4_args('<|"|>name<|"|>:<|"|>Alice<|"|>,count:42')
-        assert result == {"name": "Alice", "count": "42"}
+        assert result == {"name": "Alice", "count": 42}
 
     def test_unterminated_string(self):
         """Unterminated strings should take everything after the delimiter."""
@@ -237,7 +236,7 @@ class TestParseGemma4Args:
 
         # Non-partial mode parses trailing dot normally
         result = _parse_gemma4_args("left:108.,right:22.8", partial=False)
-        assert result == {"left": "108.", "right": "22.8"}
+        assert result == {"left": 108.0, "right": 22.8}
 
     @pytest.mark.timeout(5)
     def test_malformed_partial_array(self):
@@ -256,7 +255,7 @@ class TestParseGemma4Array:
 
     def test_bare_values(self):
         result = _parse_gemma4_array("42,true,3.14")
-        assert result == ["42", "true", "3.14"]
+        assert result == [42, True, 3.14]
 
     @pytest.mark.timeout(5)
     def test_string_element_with_closing_bracket(self):
@@ -266,7 +265,7 @@ class TestParseGemma4Array:
     @pytest.mark.timeout(5)
     def test_stray_closing_bracket(self):
         result = _parse_gemma4_array("42,]trailing")
-        assert result == ["42"]
+        assert result == [42]
 
     def test_trailing_dot_float_partial_withheld(self):
         """Array elements with trailing dot withheld in partial mode."""
@@ -275,7 +274,7 @@ class TestParseGemma4Array:
 
         # Stable elements before trailing-dot element are kept
         result = _parse_gemma4_array("42,108.,3", partial=True)
-        assert result == ["42"]
+        assert result == [42]
 
 
 # ---------------------------------------------------------------------------
@@ -381,11 +380,8 @@ class TestExtractToolCalls:
         model_output = '<|tool_call>call:get_weather{location:<|"|>London'
         result = parser.extract_tool_calls(model_output, mock_request)
 
-        assert result.tools_called is True
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].function.name == "get_weather"
-        args = json.loads(result.tool_calls[0].function.arguments)
-        assert args == {"location": "London"}
+        assert result.tools_called is False
+        assert result.tool_calls == []
 
     def test_hyphenated_function_name(self, parser, mock_request):
         """Ensure function names with hyphens are parsed correctly."""
@@ -737,6 +733,32 @@ class TestStreamingExtraction:
         assert "<|" not in args_text, (
             f"Partial delimiter leaked into JSON: {args_text!r}"
         )
+
+    def test_streaming_incomplete_tool_call_withheld(self, parser, mock_request):
+        """A length-truncated native call must not emit retractable deltas."""
+        chunks = [
+            "<|tool_call>",
+            "call:record_large_payload{",
+            'payload:<|"|>xxxxxxxx',
+        ]
+
+        results = self._simulate_streaming(parser, mock_request, chunks)
+        finish_delta = parser.finish_streaming()
+        results.append((finish_delta, "".join(chunks)))
+
+        assert all(delta is None or not delta.tool_calls for delta, _ in results), (
+            "Incomplete tool call leaked into the streaming response"
+        )
+
+    def test_streaming_name_only_tool_call_withheld(self, parser, mock_request):
+        """A prefix truncated before the opening brace is not a tool call."""
+        chunks = ["<|tool_call>", "call:record_large_payload"]
+
+        results = self._simulate_streaming(parser, mock_request, chunks)
+        finish_delta = parser.finish_streaming()
+        results.append((finish_delta, "".join(chunks)))
+
+        assert all(delta is None or not delta.tool_calls for delta, _ in results)
 
     def test_streaming_does_not_duplicate_plain_text_after_tool_call(
         self, parser, mock_request

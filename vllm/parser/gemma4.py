@@ -65,6 +65,26 @@ def _strip_partial_delim(value: str) -> str:
     return value
 
 
+def _parse_gemma4_value(value_str: str) -> object:
+    """Parse a single Gemma4 bare value into a Python object."""
+    value_str = value_str.strip()
+    if not value_str:
+        return value_str
+    if value_str == "true":
+        return True
+    if value_str == "false":
+        return False
+    if value_str.lower() in ("null", "none", "nil"):
+        return None
+    try:
+        if "." in value_str:
+            return float(value_str)
+        return int(value_str)
+    except ValueError:
+        pass
+    return value_str
+
+
 def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
     """Parse Gemma4's custom key:value format into a Python dict.
 
@@ -196,7 +216,7 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
                 # Digits may still arrive (e.g. "108." -> "108.2");
                 # withhold to avoid corrupting the streaming diff.
                 break
-            result[key] = raw_val
+            result[key] = _parse_gemma4_value(raw_val)
 
     return result
 
@@ -277,7 +297,7 @@ def _parse_gemma4_array(arr_str: str, *, partial: bool = False) -> list:
             raw_val = arr_str[val_start:i].strip()
             if partial and raw_val.endswith("."):
                 break
-            items.append(raw_val)
+            items.append(_parse_gemma4_value(raw_val))
 
     return items
 
@@ -414,12 +434,38 @@ class Gemma4Parser(ParserEngine):
         self._reasoning_text: str = ""
         self._prefix_stripped: bool = False
         self._is_first_feed: bool = True
+        self._pending_tool_events: dict[int, list[SemanticEvent]] = {}
 
     def _reset(self, initial_state=None) -> None:
         super()._reset(initial_state=initial_state)
         self._reasoning_text = ""
         self._prefix_stripped = False
         self._is_first_feed = True
+        self._pending_tool_events.clear()
+
+    def adjust_request(
+        self, request: ChatCompletionRequest | ResponsesRequest
+    ) -> ChatCompletionRequest | ResponsesRequest:
+        """Reject named tool choice when this engine backs both parsers."""
+        from openai.types.responses import ToolChoiceFunction
+
+        from vllm.entrypoints.openai.chat_completion.protocol import (
+            ChatCompletionNamedToolChoiceParam,
+        )
+        from vllm.exceptions import VLLMValidationError
+
+        if request.tools and isinstance(
+            request.tool_choice,
+            (ChatCompletionNamedToolChoiceParam, ToolChoiceFunction),
+        ):
+            raise VLLMValidationError(
+                "Named tool choice is not supported for the Gemma 4 tool "
+                "parser because it cannot force a specific function call. "
+                'Use `tool_choice` set to "auto", "required", or "none".',
+                parameter="tool_choice",
+                value=request.tool_choice,
+            )
+        return super().adjust_request(request)
 
     def _preprocess_feed(
         self,
@@ -527,11 +573,50 @@ class Gemma4Parser(ParserEngine):
         # clobbering this with ``CONTENT``.
         self._streaming_initialized = True
 
+    def _release_complete_tool_events(
+        self,
+        events: list[SemanticEvent],
+    ) -> list[SemanticEvent]:
+        """Hold Gemma4 tool deltas until the native closing token arrives.
+
+        ``StreamingParserEngine.finish()`` synthesizes ``TOOL_CALL_END`` when
+        generation stops in a tool state.  Treating that synthetic event as a
+        real close turns a length-truncated prefix such as
+        ``<|tool_call>call:get_weather`` into a valid-looking call with ``{}``
+        arguments.  Because already-streamed SSE deltas cannot be retracted,
+        buffer each native call and release it only after the model emits the
+        explicit ``<tool_call|>`` marker.  A synthetic end has an empty event
+        value and discards the buffered partial call.
+        """
+        tool_event_types = {
+            EventType.TOOL_CALL_START,
+            EventType.TOOL_NAME,
+            EventType.ARG_VALUE_CHUNK,
+            EventType.TOOL_CALL_END,
+        }
+        forwarded: list[SemanticEvent] = []
+        for event in events:
+            if event.type not in tool_event_types:
+                forwarded.append(event)
+                continue
+
+            pending = self._pending_tool_events.setdefault(event.tool_index, [])
+            pending.append(event)
+            if event.type != EventType.TOOL_CALL_END:
+                continue
+
+            if event.value == TOOL_CALL_END:
+                forwarded.extend(pending)
+            self._pending_tool_events.pop(event.tool_index, None)
+
+        return forwarded
+
     def _events_to_delta(
         self,
         events: list[SemanticEvent],
         finished: bool = False,
     ) -> DeltaMessage | None:
+        events = self._release_complete_tool_events(events)
         delta = super()._events_to_delta(events, finished=finished)
         if delta is None or delta.reasoning is None:
             return delta

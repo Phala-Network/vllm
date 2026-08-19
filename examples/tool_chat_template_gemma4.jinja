@@ -179,9 +179,10 @@
 {%- set loop_messages = messages -%}
 {%- set enable_thinking = enable_thinking | default(false) -%}
 {%- set preserve_thinking = preserve_thinking | default(false) -%}
+{%- set tools_excluded_for_tool_choice_none = tools_excluded_for_tool_choice_none | default(false) -%}
 {{- bos_token -}}
 {#- Handle System/Tool Definitions Block -#}
-{%- if enable_thinking or tools or (messages and messages[0]['role'] in ['system', 'developer']) -%}
+{%- if enable_thinking or tools or tools_excluded_for_tool_choice_none or (messages and messages[0]['role'] in ['system', 'developer']) -%}
     {{- '<|turn>system\n' -}}
     {#- Inject Thinking token at the very top of the FIRST system turn -#}
     {%- if enable_thinking -%}
@@ -197,6 +198,12 @@
             {%- endfor -%}
         {%- endif -%}
         {%- set loop_messages = messages[1:] -%}
+    {%- endif -%}
+    {%- if tools_excluded_for_tool_choice_none -%}
+        {%- if messages and messages[0]['role'] in ['system', 'developer'] -%}
+            {{- '\n' -}}
+        {%- endif -%}
+        {{- 'No tools are available for this response. Do not emit a tool call. Respond to the user in ordinary text.' -}}
     {%- endif -%}
     {%- if tools -%}
         {%- for tool in tools %}

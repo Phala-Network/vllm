@@ -392,6 +392,11 @@ class OnlineRenderer:
         renderer = self.renderer
         mm_config = self.model_config.multimodal_config
 
+        tools_excluded_for_tool_choice_none = (
+            bool(getattr(request, "tools", None))
+            and getattr(request, "tool_choice", None) == "none"
+            and tool_dicts is None
+        )
         default_template_kwargs = merge_kwargs(
             default_template_kwargs,
             dict(
@@ -400,6 +405,7 @@ class OnlineRenderer:
                     is_mistral_tokenizer(renderer.tokenizer)
                     or self.model_config.enable_prompt_embeds
                 ),
+                tools_excluded_for_tool_choice_none=tools_excluded_for_tool_choice_none,
             ),
         )
 
