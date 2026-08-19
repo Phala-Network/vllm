@@ -27,9 +27,14 @@ from vllm.v1.kv_cache_interface import (
     KVCacheSpec,
     KVQuantMode,
     MambaSpec,
+    MLAAttentionSpec,
     UniformTypeKVCacheSpecs,
 )
 from vllm.v1.worker.gpu.model_states.interface import ModelSpecificAttnMetadata
+from vllm.v1.worker.kv_cache_shape_utils import (
+    get_padded_attention_kv_cache_shape,
+    scale_padded_page_size,
+)
 from vllm.v1.worker.utils import (
     AttentionGroup,
     add_kv_sharing_layers_to_kv_cache_groups,
@@ -274,9 +279,30 @@ def _reshape_attention_kv_cache(
     kv_cache_shape: tuple[int, ...],
     kv_cache_stride_order: tuple[int, ...],
     num_blocks: int,
+    kernel_block_size: int,
     packing: tuple[int, int] | None,
     page_aligned_blocks: bool = False,
 ) -> torch.Tensor:
+    use_logical_padded_shape = (
+        packing is None
+        and kv_cache_spec.page_size_padded is not None
+        and kv_cache_spec.kv_quant_mode.is_per_token_head
+        and not isinstance(kv_cache_spec, MLAAttentionSpec)
+    )
+    if use_logical_padded_shape:
+        assert kv_cache_spec.page_size_padded is not None
+        padded_page_size = scale_padded_page_size(
+            kv_cache_spec.page_size_padded,
+            block_size=kv_cache_spec.block_size,
+            target_block_size=kernel_block_size,
+        )
+        kv_cache_shape = get_padded_attention_kv_cache_shape(
+            kv_cache_shape,
+            num_blocks=num_blocks,
+            padded_page_size_bytes=padded_page_size,
+            dtype=kv_cache_spec.dtype,
+        )
+
     permuted_kv_cache_shape = tuple(kv_cache_shape[i] for i in kv_cache_stride_order)
     inv_order = [
         kv_cache_stride_order.index(i) for i in range(len(kv_cache_stride_order))
@@ -292,7 +318,7 @@ def _reshape_attention_kv_cache(
             .view(dtype)
             .view(permuted_kv_cache_shape)
         )
-    elif kv_cache_spec.page_size_padded is not None:
+    elif kv_cache_spec.page_size_padded is not None and not use_logical_padded_shape:
         # Use a strided view to skip the padding between physical pages.
         #
         # Only num-blocks-first layouts are supported (the block dimension is
@@ -429,6 +455,7 @@ def _reshape_kv_cache(
                     kv_cache_shape,
                     kv_cache_stride_order,
                     kernel_num_blocks,
+                    kernel_block_size,
                     packing,
                     page_aligned_blocks=layer_name in page_aligned_layers,
                 )

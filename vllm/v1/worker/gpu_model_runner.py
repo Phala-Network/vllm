@@ -7591,6 +7591,7 @@ class GPUModelRunner(
                         kv_cache_shape,
                         kv_cache_stride_order,
                         kernel_num_blocks,
+                        kernel_block_size,
                         packing,
                     )
 

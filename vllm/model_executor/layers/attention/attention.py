@@ -249,6 +249,7 @@ class Attention(nn.Module, AttentionLayerBase):
         mm_prefix_clamp_sliding_window: bool = False,
         attn_backend: type[AttentionBackend] | None = None,
         head_size_v: int | None = None,
+        kv_cache_page_size_padded: int | None = None,
         **extra_impl_args,
     ) -> None:
         """
@@ -449,6 +450,7 @@ class Attention(nn.Module, AttentionLayerBase):
         # Gemma4: clamp mm_prefix bidirectional ranges by the sliding window
         # (read by the Triton backend impl). Default False for all other models.
         self.mm_prefix_clamp_sliding_window = mm_prefix_clamp_sliding_window
+        self.kv_cache_page_size_padded = kv_cache_page_size_padded
 
         # use a placeholder kv cache tensor during init, which will be replaced
         # by bind_kv_cache
@@ -650,7 +652,11 @@ class Attention(nn.Module, AttentionLayerBase):
                 dtype=self.kv_cache_torch_dtype,
                 kv_quant_mode=quant_mode,
                 sliding_window=self.sliding_window,
-                page_size_padded=shared_page,
+                page_size_padded=(
+                    self.kv_cache_page_size_padded
+                    if self.kv_cache_page_size_padded is not None
+                    else shared_page
+                ),
             )
         else:
             return FullAttentionSpec(
@@ -660,6 +666,7 @@ class Attention(nn.Module, AttentionLayerBase):
                 head_size_v=self.head_size_v,
                 dtype=self.kv_cache_torch_dtype,
                 kv_quant_mode=quant_mode,
+                page_size_padded=self.kv_cache_page_size_padded,
             )
 
 
