@@ -420,7 +420,7 @@ class Gemma4Parser(ParserEngine):
         **kwargs,
     ) -> None:
         chat_kwargs = kwargs.get("chat_template_kwargs", {}) or {}
-        self._thinking_enabled = chat_kwargs.get("enable_thinking", True)
+        self._thinking_enabled = chat_kwargs.get("enable_thinking", False)
         super().__init__(
             tokenizer,
             tools,
@@ -659,10 +659,20 @@ class Gemma4Parser(ParserEngine):
         model_output: str,
         request: ChatCompletionRequest | ResponsesRequest,
     ) -> tuple[str | None, str | None]:
+        reasoning_start = model_output.find(CHANNEL_START)
+        preamble = ""
+        if reasoning_start > 0:
+            preamble = model_output[:reasoning_start]
+            model_output = model_output[reasoning_start:]
+
         reasoning, content = super().extract_reasoning(model_output, request)
         if reasoning:
             if reasoning.startswith(_GEMMA4_THOUGHT_PREFIX):
                 reasoning = reasoning[len(_GEMMA4_THOUGHT_PREFIX) :]
             elif reasoning == _GEMMA4_THOUGHT_PREFIX.rstrip():
                 reasoning = None
+
+        if preamble:
+            reasoning = preamble + (reasoning or "")
+
         return reasoning or None, content

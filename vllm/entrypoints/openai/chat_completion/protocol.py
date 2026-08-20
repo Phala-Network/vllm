@@ -865,6 +865,10 @@ class ChatCompletionRequest(OpenAIBaseModel):
             return data
 
         structured_outputs_kwargs = data["structured_outputs"]
+        if isinstance(structured_outputs_kwargs, bool):
+            data["structured_outputs"] = None
+            return data
+
         # structured_outputs may arrive as a dict (from JSON/raw kwargs) or
         # as a StructuredOutputsParams dataclass instance.
         is_dataclass = isinstance(structured_outputs_kwargs, StructuredOutputsParams)

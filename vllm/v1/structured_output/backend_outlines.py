@@ -98,6 +98,7 @@ class OutlinesBackend(StructuredOutputBackend):
         return OutlinesGrammar(
             vocab_size=self.vocab_size,
             guide=oc.Guide(index, max_rollback=max_rollback_tokens),
+            stop_token_ids=stop_token_ids or set(),
         )
 
     def allocate_token_bitmask(self, max_num_seqs: int) -> torch.Tensor:
@@ -116,6 +117,7 @@ class OutlinesBackend(StructuredOutputBackend):
 class OutlinesGrammar(StructuredOutputGrammar):
     vocab_size: int
     guide: oc.Guide = field(hash=False)
+    stop_token_ids: set[int] = field(hash=False)
     num_processed_tokens: int = field(
         default_factory=lambda: 0, repr=False, hash=False, init=False
     )
@@ -130,26 +132,48 @@ class OutlinesGrammar(StructuredOutputGrammar):
         Returns True if the FSM was advanced successfully.
         Returns False if the FSM failed to advance.
         """
-        if self.guide.accepts_tokens(tokens):
-            # Advance can fail when the next state reached after advancing with
-            # the current tokens is a dead state. This is because Guide.accepts_tokens()
-            # only checks whether the current tokens can be accepted,
-            # whereas guide.advance() additionally checks the next state
-            # after all tokens are accepted.
-            # We need to be aware that the FSM must be prepared without dead states.
-            for t in tokens:
-                self.guide.advance(t)
-                self.num_processed_tokens += 1
-            return True
-        return False
+        if self._prev_finished:
+            return bool(tokens) and tokens[0] in self.stop_token_ids
+        if len(self.validate_tokens(tokens)) != len(tokens):
+            return False
+
+        for token in tokens:
+            if self.guide.is_finished():
+                # Speculative decoding can return JSON-tail draft tokens and a
+                # bonus stop token in the same scheduler step. The stop token
+                # terminates the request but is not part of the regex DFA.
+                self._prev_finished = True
+                return token in self.stop_token_ids
+            self.guide.advance(token)
+            self.num_processed_tokens += 1
+        return True
 
     def rollback(self, num_tokens: int) -> None:
         self.guide.rollback_state(num_tokens)
         self.num_processed_tokens -= num_tokens
+        # grammar_bitmask() temporarily advances speculative tokens and then
+        # rolls them back. is_terminated() updates this delayed-finish flag as
+        # a side effect, so restore it along with the DFA state.
+        self._prev_finished = self.guide.is_finished()
 
     def validate_tokens(self, tokens: list[int]) -> list[int]:
+        if self._prev_finished:
+            return tokens[:1] if tokens and tokens[0] in self.stop_token_ids else []
         accepted: list[int] = []
         for tok in tokens:
+            if tok in self.stop_token_ids:
+                # accepts_tokens() cannot report whether a hypothetical prefix
+                # ends in an accepting state. Advance only that prefix, inspect
+                # it, and roll it back. The prefix is bounded by the configured
+                # speculative-token count, which is also Guide.max_rollback.
+                for accepted_tok in accepted:
+                    self.guide.advance(accepted_tok)
+                prefix_finished = self.guide.is_finished()
+                if accepted:
+                    self.guide.rollback_state(len(accepted))
+                if prefix_finished:
+                    accepted.append(tok)
+                break
             accepted.append(tok)
             if not self.guide.accepts_tokens(accepted):
                 accepted.pop()

@@ -54,8 +54,15 @@ def has_guidance_unsupported_json_features(schema: dict[str, Any]) -> bool:
         if not isinstance(obj, dict):
             return False
 
-        # patternProperties is not supported by llguidance
-        if "patternProperties" in obj:
+        if obj.get("type") == "array" and any(
+            key in obj
+            for key in ("uniqueItems", "contains", "minContains", "maxContains")
+        ):
+            return True
+
+        if obj.get("type") == "object" and any(
+            key in obj for key in ("patternProperties", "propertyNames")
+        ):
             return True
 
         # Recursively check all nested objects and arrays
