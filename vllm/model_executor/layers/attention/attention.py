@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import functools
+import json
+import math
+import os
+import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -33,6 +39,7 @@ from vllm.utils.torch_utils import (
     _encode_layer_name,
     _resolve_layer_name,
     direct_register_custom_op,
+    is_quantized_kv_cache,
     kv_cache_dtype_str_to_dtype,
 )
 from vllm.v1.attention.backend import (
@@ -53,6 +60,105 @@ if TYPE_CHECKING:
     from vllm.model_executor.layers.attention import MLAAttention
 
 logger = init_logger(__name__)
+
+_STATIC_KV_SCALE_ENV = "VLLM_STATIC_KV_SCALE_PATH"
+_KV_SCALE_CALIBRATION_ENV = "VLLM_KV_SCALE_CALIBRATION_PATH"
+_kv_scale_calibration_lock = threading.Lock()
+
+
+@functools.cache
+def _load_static_kv_scale_file(path: str) -> dict[str, Any]:
+    with open(path, encoding="utf-8") as scale_file:
+        data = json.load(scale_file)
+    if data.get("schema") != "vllm-static-kv-scales-v1":
+        raise ValueError(f"Unsupported static KV scale schema in {path}")
+    if not isinstance(data.get("layers"), dict):
+        raise ValueError(f"Static KV scale file has no layers map: {path}")
+    return data
+
+
+def apply_static_kv_scales(layer: nn.Module, prefix: str) -> bool:
+    """Load calibrated per-head K/V scales from an explicit sidecar file."""
+    path = os.getenv(_STATIC_KV_SCALE_ENV)
+    if not path or not is_quantized_kv_cache(layer.kv_cache_dtype):
+        return False
+
+    data = _load_static_kv_scale_file(path)
+    entry = data["layers"].get(prefix)
+    if entry is None:
+        raise KeyError(f"Missing static KV scales for quantized layer {prefix}")
+
+    expected = int(layer.num_kv_heads)
+    k_values = entry.get("k_scale")
+    v_values = entry.get("v_scale")
+    if not isinstance(k_values, list) or not isinstance(v_values, list):
+        raise ValueError(f"Invalid static KV scale entry for {prefix}")
+    if len(k_values) not in (1, expected) or len(v_values) != len(k_values):
+        raise ValueError(
+            f"Static KV scales for {prefix} must have 1 or {expected} values"
+        )
+    if not all(
+        isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+        for value in (*k_values, *v_values)
+    ):
+        raise ValueError(f"Static KV scales for {prefix} must be finite and positive")
+
+    device = layer._k_scale.device
+
+    def replace_scale(name: str, values: list[float]) -> None:
+        scale = torch.tensor(values, dtype=torch.float32, device=device)
+        if name in layer._parameters:
+            del layer._parameters[name]
+            layer.register_buffer(name, scale)
+        else:
+            setattr(layer, name, scale)
+
+    replace_scale("_k_scale", k_values)
+    replace_scale("_v_scale", v_values)
+    layer._k_scale_float = max(k_values)
+    layer._v_scale_float = max(v_values)
+    layer._k_scale_cpu.fill_(layer._k_scale_float)
+    layer._v_scale_cpu.fill_(layer._v_scale_float)
+    logger.info(
+        "Loaded calibrated static KV scales for %s (%d scale values)",
+        prefix,
+        len(k_values),
+    )
+    return True
+
+
+def record_kv_scale_calibration_sample(
+    layer: nn.Module,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    slot_mapping: torch.Tensor,
+) -> None:
+    """Append per-head K/V maxima for an explicitly enabled calibration run."""
+    path = os.getenv(_KV_SCALE_CALIBRATION_ENV)
+    if not path:
+        return
+
+    num_tokens = int(slot_mapping.shape[0])
+    if num_tokens == 0:
+        return
+    key_amax = key[:num_tokens].detach().abs().amax(dim=(0, 2)).float()
+    value_amax = value[:num_tokens].detach().abs().amax(dim=(0, 2)).float()
+    if not torch.isfinite(key_amax).all() or not torch.isfinite(value_amax).all():
+        raise RuntimeError(f"Non-finite KV calibration sample for {layer.layer_name}")
+
+    sample = {
+        "schema": "vllm-kv-amax-sample-v1",
+        "layer": layer.layer_name,
+        "tokens": num_tokens,
+        "k_amax": key_amax.cpu().tolist(),
+        "v_amax": value_amax.cpu().tolist(),
+    }
+    output = Path(path)
+    with _kv_scale_calibration_lock:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("a", encoding="utf-8") as calibration_file:
+            calibration_file.write(json.dumps(sample, separators=(",", ":")))
+            calibration_file.write("\n")
 
 
 def validate_kv_sharing_target(
@@ -594,6 +700,8 @@ class Attention(nn.Module, AttentionLayerBase):
             if self.quant_config
             else None
         )
+        if apply_static_kv_scales(self, self.layer_name):
+            return
         if not should_load_quant_weights(quant_method):
             set_default_quant_scales(self, register_buffer=False)
 

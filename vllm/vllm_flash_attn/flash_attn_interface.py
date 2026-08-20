@@ -173,6 +173,24 @@ def get_scheduler_metadata(
     return scheduler_metadata
 
 
+def _get_fa4_fp8_kv_tile_mn(
+    *,
+    fp8_kv_dequant: bool,
+    head_dim: int,
+    page_size: int | None,
+) -> tuple[int, int] | None:
+    """Keep SM90 paged FP8 KV compatible with FA4's selected tile width.
+
+    Gemma4's visual ``mm_prefix`` mask disables FA4's built-in local flag. For
+    its 256-wide sliding layers, the generic non-local heuristic then selects
+    tile_n=80 even when the paged KV cache uses 64-token pages. The SM90 FP8
+    dequantization kernel requires those widths to match.
+    """
+    if fp8_kv_dequant and head_dim == 256 and page_size == 64:
+        return (128, 64)
+    return None
+
+
 def flash_attn_varlen_func(
     q,
     k,
@@ -420,6 +438,12 @@ def flash_attn_varlen_func(
             fa4_k_descale = None
             fa4_v_descale = None
 
+        fa4_tile_mn = _get_fa4_fp8_kv_tile_mn(
+            fp8_kv_dequant=fa4_fp8_kv_dequant,
+            head_dim=q.shape[-1],
+            page_size=k.shape[1] if block_table is not None else None,
+        )
+
         out, softmax_lse, _, _ = _flash_attn_fwd(
             q,
             k,
@@ -438,6 +462,7 @@ def flash_attn_varlen_func(
             window_size_right=real_window_size[1] if real_window_size[1] >= 0 else None,
             num_splits=num_splits,
             return_lse=return_softmax_lse,
+            tile_mn=fa4_tile_mn,
             out=out,
             learnable_sink=s_aux,
             mask_mod=mask_mod,

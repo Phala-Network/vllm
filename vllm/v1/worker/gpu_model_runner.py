@@ -57,7 +57,11 @@ from vllm.forward_context import (
 )
 from vllm.logger import init_logger
 from vllm.lora.layers import BaseLayerWithLoRA, LoRAMapping, LoRAMappingType
-from vllm.model_executor.layers.attention import Attention, MLAAttention
+from vllm.model_executor.layers.attention import (
+    Attention,
+    MLAAttention,
+)
+from vllm.model_executor.layers.attention.attention import apply_static_kv_scales
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.layers.fused_moe.all2all_utils import get_ep_all2all_manager
 from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
@@ -1062,6 +1066,10 @@ class GPUModelRunner(
         attn_layers = self.compilation_config.static_forward_context
         for name, module in attn_layers.items():
             if isinstance(module, (Attention, MLAAttention)):
+                if isinstance(module, Attention) and apply_static_kv_scales(
+                    module, name
+                ):
+                    continue
                 # TODO: Generally, scale is 1.0 if user uses on-the-fly fp8
                 # kvcache quant. However, to get better accuracy, compression
                 # frameworks like llm-compressors allow users to tune the

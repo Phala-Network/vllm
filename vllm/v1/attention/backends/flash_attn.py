@@ -11,6 +11,9 @@ import numpy as np
 import torch
 
 from vllm.model_executor.layers.attention import Attention
+from vllm.model_executor.layers.attention.attention import (
+    record_kv_scale_calibration_sample,
+)
 from vllm.platforms import current_platform
 from vllm.utils.torch_utils import (
     PIN_MEMORY,
@@ -1242,6 +1245,8 @@ class FlashAttentionImpl(AttentionImpl):
             # For encoder attention,
             # we use direct Q, K, V tensors without caching
             return
+
+        record_kv_scale_calibration_sample(layer, key, value, slot_mapping)
 
         # Scatter write into the KV cache using slot_mapping indices.
         # No TMA kernel is invoked here, so stride canonicalization is not needed.
