@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import ctypes
 import operator
 import sys
+import threading
+import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from multiprocessing.synchronize import Lock as LockType
 from typing import TYPE_CHECKING, Generic, TypeAlias, TypeVar, cast
 
@@ -118,6 +121,94 @@ MultiModalCacheValue: TypeAlias = (
 _V = TypeVar("_V", bound=MultiModalCacheValue)
 
 
+class _ThrottledMallocTrim:
+    """Best-effort glibc heap release after large MM cache evictions."""
+
+    def __init__(
+        self,
+        interval_s: float = 30.0,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+        trim: Callable[[int], int] | None = None,
+    ) -> None:
+        self.interval_s = interval_s
+        self._monotonic = monotonic
+        self._lock = threading.Lock()
+        self._last_trim = float("-inf")
+        self._libc: ctypes.CDLL | None = None
+        self._trim = trim if trim is not None else self._load_malloc_trim()
+
+    def _load_malloc_trim(self) -> Callable[[int], int] | None:
+        try:
+            self._libc = ctypes.CDLL(None, use_errno=True)
+            trim = self._libc.malloc_trim
+        except (AttributeError, OSError):
+            return None
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+        return trim
+
+    def maybe_trim(self) -> bool:
+        if self._trim is None:
+            return False
+        now = self._monotonic()
+        if now - self._last_trim < self.interval_s:
+            return False
+        with self._lock:
+            now = self._monotonic()
+            if now - self._last_trim < self.interval_s:
+                return False
+            self._last_trim = now
+            try:
+                return bool(self._trim(0))
+            except Exception:
+                logger.warning_once(
+                    "Disabling multi-modal cache malloc_trim after an error",
+                    exc_info=True,
+                )
+                self._trim = None
+                return False
+
+
+_MM_CACHE_MALLOC_TRIMMER = _ThrottledMallocTrim()
+
+
+class _TrimAwareLRUCache(LRUCache[str, _V]):
+    """LRU that trims only after an eviction has released its last local ref."""
+
+    def __init__(
+        self,
+        capacity: float,
+        getsizeof: Callable[[_V], float],
+        trimmer: _ThrottledMallocTrim,
+    ) -> None:
+        super().__init__(capacity, getsizeof)
+        self._trimmer = trimmer
+        self._removed_during_insert = False
+
+    @override
+    def __setitem__(self, key: str, value: _V) -> None:
+        self._removed_during_insert = False
+        try:
+            super().__setitem__(key, value)
+        finally:
+            removed = self._removed_during_insert
+            self._removed_during_insert = False
+        if removed:
+            self._trimmer.maybe_trim()
+
+    @override
+    def _on_remove(self, key: str, value: _V | None) -> None:
+        self._removed_during_insert = True
+
+    @override
+    def clear(self) -> None:
+        had_items = bool(self)
+        super().clear()
+        if had_items:
+            self._trimmer.maybe_trim()
+
+
 class MultiModalCache:
     @classmethod
     def get_leaf_size(cls, leaf: object) -> int:
@@ -184,10 +275,18 @@ class MultiModalCache:
         value_type: type[_V],
         *,
         debug: bool = False,
+        trim_on_evict: bool = False,
     ) -> LRUCache[str, _V]:
+        getsizeof = lambda x: cls.get_item_size(x, debug=debug)
+        if trim_on_evict:
+            return _TrimAwareLRUCache(
+                GiB_bytes * capacity_gb,
+                getsizeof,
+                _MM_CACHE_MALLOC_TRIMMER,
+            )
         return LRUCache(
             GiB_bytes * capacity_gb,
-            getsizeof=lambda x: cls.get_item_size(x, debug=debug),
+            getsizeof=getsizeof,
         )
 
 
@@ -728,6 +827,7 @@ class MultiModalReceiverCache(BaseMultiModalReceiverCache):
         self._cache = MultiModalCache.get_lru_cache(
             mm_config.mm_processor_cache_gb,
             MultiModalKwargsItem,
+            trim_on_evict=True,
         )
 
     @override

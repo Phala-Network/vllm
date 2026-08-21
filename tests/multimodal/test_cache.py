@@ -22,6 +22,8 @@ from vllm.multimodal.cache import (
     MultiModalReceiverCache,
     ShmObjectStoreReceiverCache,
     ShmObjectStoreSenderCache,
+    _MM_CACHE_MALLOC_TRIMMER,
+    _ThrottledMallocTrim,
 )
 from vllm.multimodal.hasher import MultiModalHasher
 from vllm.multimodal.inputs import (
@@ -274,6 +276,59 @@ def test_oversized_item_is_served_uncached():
     assert not p0.is_cached_item("big")
     assert p1.get_and_update_item(item, "big") is item
     assert "big" not in p1._cache
+
+
+def test_malloc_trim_is_throttled():
+    now = [0.0]
+    calls: list[int] = []
+    trimmer = _ThrottledMallocTrim(
+        interval_s=30.0,
+        monotonic=lambda: now[0],
+        trim=lambda padding: calls.append(padding) or 1,
+    )
+
+    assert trimmer.maybe_trim()
+    now[0] = 29.9
+    assert not trimmer.maybe_trim()
+    now[0] = 30.0
+    assert trimmer.maybe_trim()
+    assert calls == [0, 0]
+
+
+@pytest.mark.skip_global_cleanup
+def test_receiver_cache_trims_only_after_real_eviction(monkeypatch):
+    calls = 0
+
+    def fake_trim() -> bool:
+        nonlocal calls
+        calls += 1
+        return True
+
+    monkeypatch.setattr(_MM_CACHE_MALLOC_TRIMMER, "maybe_trim", fake_trim)
+    model_config = _StubModelConfig(mm_processor_cache_gb=128 / GiB_bytes)
+    p1 = MultiModalReceiverCache(model_config)  # type: ignore[arg-type]
+
+    first = MultiModalKwargsItem.dummy(nbytes=96)
+    second = MultiModalKwargsItem.dummy(nbytes=96)
+    oversized = MultiModalKwargsItem.dummy(nbytes=256)
+
+    assert p1.get_and_update_item(first, "first") is first
+    assert calls == 0
+
+    # Inserting the second item evicts the first. Trimming happens only after
+    # cachetools has returned from the removal path and released its local ref.
+    assert p1.get_and_update_item(second, "second") is second
+    assert calls == 1
+    assert "first" not in p1._cache
+    assert "second" in p1._cache
+
+    # The upstream oversize guard rejects before eviction and must not trim.
+    assert p1.get_and_update_item(oversized, "oversized") is oversized
+    assert calls == 1
+    assert "oversized" not in p1._cache
+
+    p1.clear_cache()
+    assert calls == 2
 
 
 def test_mm_cache_miss_raises_and_recovers():
