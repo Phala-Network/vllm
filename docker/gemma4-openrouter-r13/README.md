@@ -23,7 +23,7 @@ Tool and Structured Output hardening:
 FlashInfer `%globaltimer`:
 
 - compiles only SM90 (`TORCH_CUDA_ARCH_LIST=9.0`) in a build stage with
-  `libcusparse-dev-12-9`;
+  `libcusparse-dev-12-9` and `libcusolver-dev-12-9`;
 - copies only the extension into the runtime image;
 - keeps `cusparse.h` out of the final image and directly imports the prebuilt
   module before the JIT fallback.

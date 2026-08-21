@@ -8,7 +8,9 @@ ENV MAX_JOBS=1 \
     TORCH_EXTENSIONS_DIR=/opt/vllm/torch-extensions
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libcusparse-dev-12-9 \
+    && apt-get install -y --no-install-recommends \
+      libcusolver-dev-12-9 \
+      libcusparse-dev-12-9 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -c 'import os, shutil; from pathlib import Path; from flashinfer.utils import get_globaltimer_kernel; kernel = get_globaltimer_kernel(); assert callable(kernel), "FlashInfer globaltimer precompile returned no kernel"; root = Path(os.environ["TORCH_EXTENSIONS_DIR"]); matches = list(root.rglob("flashinfer_globaltimer*.so")); assert len(matches) == 1, matches; out = Path("/opt/vllm/prebuilt/flashinfer_globaltimer.so"); out.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(matches[0], out); print(f"precompiled_globaltimer={matches[0]}")'
