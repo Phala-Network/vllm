@@ -77,9 +77,13 @@ RUN set -eux; \
       "$FLASHINFER_PACKAGE_ROOT/utils.py"; \
     test "$(sha256sum "$VLLM_PACKAGE_ROOT/_C_stable_libtorch.abi3.so" | cut -d' ' -f1)" = "e8d11cee75dc85fa1bde970655053a75dcdf2292619a5b7af5977345904d8f54"; \
     test ! -e /usr/local/cuda/include/cusparse.h; \
-    ldd /usr/local/lib/python3.12/dist-packages/flashinfer_globaltimer.so | tee /tmp/globaltimer.ldd; \
-    ! grep -q "not found" /tmp/globaltimer.ldd; \
-    rm -rf /tmp/vllm-r13 /tmp/globaltimer.ldd
+    test ! -e /usr/local/cuda/include/cusolverDn.h; \
+    LD_LIBRARY_PATH="/usr/local/lib/python3.12/dist-packages/torch/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ldd /usr/local/lib/python3.12/dist-packages/flashinfer_globaltimer.so | tee /tmp/globaltimer.ldd; \
+    if grep -q "not found" /tmp/globaltimer.ldd; then exit 1; fi; \
+    cuobjdump --list-elf /usr/local/lib/python3.12/dist-packages/flashinfer_globaltimer.so | tee /tmp/globaltimer.cubin; \
+    grep -q "sm_90" /tmp/globaltimer.cubin; \
+    rm -rf /tmp/vllm-r13 /tmp/globaltimer.ldd /tmp/globaltimer.cubin
 
 RUN python3 -c 'from unittest.mock import patch; import flashinfer.utils as utils; utils.get_globaltimer_kernel.cache_clear(); guard = patch("torch.utils.cpp_extension.load_inline", side_effect=AssertionError("runtime attempted globaltimer JIT")); guard.start(); kernel = utils.get_globaltimer_kernel(); guard.stop(); assert callable(kernel); print("precompiled_globaltimer_direct_load=passed")'
 
