@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 ARG BASE_IMAGE=ghcr.io/phala-network/vllm-openai:main-aa9903490-cu130-ubuntu2404-gemma4-pth-toolfix-r12@sha256:27f9382fdb8d59b5dab28f244569ae499ade293ca649f60849cb92f8cc258c41
 
 FROM ${BASE_IMAGE} AS globaltimer-builder
@@ -12,23 +11,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libcusparse-dev-12-9 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 - <<'PY'
-import os
-import shutil
-from pathlib import Path
-
-from flashinfer.utils import get_globaltimer_kernel
-
-kernel = get_globaltimer_kernel()
-assert callable(kernel), "FlashInfer globaltimer precompile returned no kernel"
-root = Path(os.environ["TORCH_EXTENSIONS_DIR"])
-matches = list(root.rglob("flashinfer_globaltimer*.so"))
-assert len(matches) == 1, matches
-out = Path("/opt/vllm/prebuilt/flashinfer_globaltimer.so")
-out.parent.mkdir(parents=True, exist_ok=True)
-shutil.copy2(matches[0], out)
-print(f"precompiled_globaltimer={matches[0]}")
-PY
+RUN python3 -c 'import os, shutil; from pathlib import Path; from flashinfer.utils import get_globaltimer_kernel; kernel = get_globaltimer_kernel(); assert callable(kernel), "FlashInfer globaltimer precompile returned no kernel"; root = Path(os.environ["TORCH_EXTENSIONS_DIR"]); matches = list(root.rglob("flashinfer_globaltimer*.so")); assert len(matches) == 1, matches; out = Path("/opt/vllm/prebuilt/flashinfer_globaltimer.so"); out.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(matches[0], out); print(f"precompiled_globaltimer={matches[0]}")'
 
 FROM ${BASE_IMAGE}
 
@@ -96,20 +79,7 @@ RUN set -eux; \
     ! grep -q "not found" /tmp/globaltimer.ldd; \
     rm -rf /tmp/vllm-r13 /tmp/globaltimer.ldd
 
-RUN python3 - <<'PY'
-from unittest.mock import patch
-
-import flashinfer.utils as utils
-
-utils.get_globaltimer_kernel.cache_clear()
-with patch(
-    "torch.utils.cpp_extension.load_inline",
-    side_effect=AssertionError("runtime attempted globaltimer JIT"),
-):
-    kernel = utils.get_globaltimer_kernel()
-assert callable(kernel)
-print("precompiled_globaltimer_direct_load=passed")
-PY
+RUN python3 -c 'from unittest.mock import patch; import flashinfer.utils as utils; utils.get_globaltimer_kernel.cache_clear(); guard = patch("torch.utils.cpp_extension.load_inline", side_effect=AssertionError("runtime attempted globaltimer JIT")); guard.start(); kernel = utils.get_globaltimer_kernel(); guard.stop(); assert callable(kernel); print("precompiled_globaltimer_direct_load=passed")'
 
 LABEL org.opencontainers.image.source="https://github.com/zozyo/vllm" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
