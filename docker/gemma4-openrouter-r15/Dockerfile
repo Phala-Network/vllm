@@ -7,6 +7,9 @@ ENV VLLM_PACKAGE_ROOT=/usr/local/lib/python3.12/dist-packages/vllm
 
 COPY vllm/v1/structured_output/utils.py /tmp/vllm-r15/vllm/v1/structured_output/utils.py
 COPY vllm/v1/structured_output/__init__.py /tmp/vllm-r15/vllm/v1/structured_output/__init__.py
+COPY tests/__init__.py /opt/vllm-r15-tests/tests/__init__.py
+COPY tests/v1/__init__.py /opt/vllm-r15-tests/tests/v1/__init__.py
+COPY tests/v1/structured_output/__init__.py /opt/vllm-r15-tests/tests/v1/structured_output/__init__.py
 COPY tests/v1/structured_output/test_regex_compilation_timeout.py /opt/vllm-r15-tests/tests/v1/structured_output/test_regex_compilation_timeout.py
 
 RUN set -eux; \
