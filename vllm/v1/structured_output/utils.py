@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import multiprocessing
+import os
 import sqlite3
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -48,6 +50,8 @@ _compile_semaphore: threading.Semaphore | None = None
 _compile_semaphore_lock = threading.Lock()
 _mp_context = None
 _mp_context_lock = threading.Lock()
+_mp_context_warmed = False
+_mp_context_warm_lock = threading.Lock()
 
 
 def _get_compile_semaphore() -> threading.Semaphore:
@@ -66,7 +70,14 @@ def _get_mp_context():
     if _mp_context is None:
         with _mp_context_lock:
             if _mp_context is None:
-                _mp_context = multiprocessing.get_context("fork")
+                multiprocessing.set_forkserver_preload(
+                    [
+                        "vllm.v1.structured_output.utils",
+                        "xgrammar",
+                        "outlines_core",
+                    ]
+                )
+                _mp_context = multiprocessing.get_context("forkserver")
     return _mp_context
 
 
@@ -75,7 +86,7 @@ def _regex_compile_worker(
     args: tuple[Any, ...],
     result_conn: Any,
 ) -> None:
-    """Target for the forked subprocess that performs regex compilation."""
+    """Target for the forkserver child that performs regex compilation."""
     try:
         try:
             payload = ("ok", fn(*args))
@@ -112,6 +123,41 @@ def _kill_and_join(process: multiprocessing.Process) -> None:
     if process.is_alive():
         raise RuntimeError(
             f"Regex compilation subprocess {process.pid} could not be reaped"
+        )
+
+
+def _regex_compile_worker_healthcheck() -> None:
+    """Start and exit after forkserver preload completes."""
+
+
+def initialize_regex_compilation_forkserver() -> None:
+    """Warm the safe regex worker context before grammar executor threads start."""
+    global _mp_context_warmed
+    if envs.VLLM_REGEX_COMPILATION_TIMEOUT_S <= 0 or _mp_context_warmed:
+        return
+
+    with _mp_context_warm_lock:
+        if _mp_context_warmed:
+            return
+
+        ctx = _get_mp_context()
+        process = ctx.Process(target=_regex_compile_worker_healthcheck, daemon=True)
+        started_at = time.monotonic()
+        process.start()
+        process.join(timeout=30)
+        if process.is_alive():
+            _kill_and_join(process)
+            raise RuntimeError("Regex compilation forkserver warmup timed out")
+        if process.exitcode != 0:
+            raise RuntimeError(
+                "Regex compilation forkserver warmup exited with code "
+                f"{process.exitcode}"
+            )
+
+        _mp_context_warmed = True
+        logger.info(
+            "Regex compilation forkserver warmed in %.2f seconds",
+            time.monotonic() - started_at,
         )
 
 

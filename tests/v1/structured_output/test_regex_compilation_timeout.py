@@ -14,11 +14,15 @@ import contextlib
 import os
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
 
-from vllm.v1.structured_output.utils import compile_regex_with_timeout
+from vllm.v1.structured_output.utils import (
+    compile_regex_with_timeout,
+    initialize_regex_compilation_forkserver,
+)
 
 
 def _slow_compile(pattern: str) -> str:
@@ -40,6 +44,11 @@ def _failing_compile(pattern: str) -> str:
 def _large_compile(pattern: str) -> bytes:
     """Return enough data to fill a pipe if the parent does not drain it."""
     return pattern.encode() + b"x" * (8 * 1024 * 1024)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _warm_regex_compilation_forkserver():
+    initialize_regex_compilation_forkserver()
 
 
 class TestCompileRegexWithTimeout:
@@ -70,6 +79,16 @@ class TestCompileRegexWithTimeout:
             result = compile_regex_with_timeout(_large_compile, "large:")
         assert len(result) == len("large:") + 8 * 1024 * 1024
         assert result.startswith(b"large:")
+
+    def test_regex_compiles_from_grammar_executor_thread(self):
+        import vllm.v1.structured_output.utils as utils_mod
+
+        assert utils_mod._get_mp_context().get_start_method() == "forkserver"
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            result = executor.submit(
+                compile_regex_with_timeout, _fast_compile, r"[a-z]+"
+            ).result(timeout=10)
+        assert result == "compiled:[a-z]+"
 
     def test_pattern_included_in_error_message(self):
         pattern = r"(a+)+b"

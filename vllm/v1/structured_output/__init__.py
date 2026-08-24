@@ -17,6 +17,9 @@ from vllm.v1.structured_output.backend_types import (
     StructuredOutputGrammar,
 )
 from vllm.v1.structured_output.backend_xgrammar import XgrammarBackend
+from vllm.v1.structured_output.utils import (
+    initialize_regex_compilation_forkserver,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -74,6 +77,10 @@ class StructuredOutputManager:
             # not I/O bound. We also know we would never dominate CPU usage
             # with just grammar compilation, so we set it to half the number
             # of CPUs.
+            # Forking from these executor threads is unsafe after native
+            # libraries have created threads. Warm a preloaded forkserver
+            # before the executor exists so request-time workers start fast.
+            initialize_regex_compilation_forkserver()
             max_workers = max(1, (multiprocessing.cpu_count() + 1) // 2)
             self.executor = ThreadPoolExecutor(max_workers=max_workers)
             self.tokenizer = cached_tokenizer_from_config(
