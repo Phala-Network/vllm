@@ -5,8 +5,6 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import multiprocessing
-import os
-import signal
 import sqlite3
 import tempfile
 import threading
@@ -75,14 +73,46 @@ def _get_mp_context():
 def _regex_compile_worker(
     fn: Callable[..., Any],
     args: tuple[Any, ...],
-    result_queue: multiprocessing.Queue,
+    result_conn: Any,
 ) -> None:
     """Target for the forked subprocess that performs regex compilation."""
     try:
-        result = fn(*args)
-        result_queue.put(("ok", result))
-    except Exception as exc:
-        result_queue.put(("err", exc))
+        try:
+            payload = ("ok", fn(*args))
+        except Exception as exc:
+            payload = ("err", exc)
+
+        try:
+            result_conn.send(payload)
+        except Exception as exc:
+            # Native compiler return values and exceptions should be picklable,
+            # but convert serialization failures into a request-level error.
+            result_conn.send(
+                (
+                    "err",
+                    RuntimeError(
+                        "Regex compilation result could not be transferred: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+            )
+    finally:
+        result_conn.close()
+
+
+def _pattern_summary(args: tuple[Any, ...]) -> str:
+    return str(args[0])[:200] if args else "<unknown>"
+
+
+def _kill_and_join(process: multiprocessing.Process) -> None:
+    """Ensure a compiler subprocess cannot survive the request deadline."""
+    if process.is_alive():
+        process.kill()
+    process.join(timeout=5)
+    if process.is_alive():
+        raise RuntimeError(
+            f"Regex compilation subprocess {process.pid} could not be reaped"
+        )
 
 
 def compile_regex_with_timeout(fn: Callable[..., _T], *args: Any) -> _T:
@@ -109,7 +139,7 @@ def compile_regex_with_timeout(fn: Callable[..., _T], *args: Any) -> _T:
     semaphore = _get_compile_semaphore()
     acquired = semaphore.acquire(timeout=timeout)
     if not acquired:
-        pattern_str = str(args[0])[:200] if args else "<unknown>"
+        pattern_str = _pattern_summary(args)
         raise ValueError(
             f"Regex compilation could not acquire a compile slot within "
             f"{timeout}s (max concurrent: "
@@ -119,46 +149,55 @@ def compile_regex_with_timeout(fn: Callable[..., _T], *args: Any) -> _T:
 
     try:
         ctx = _get_mp_context()
-        result_queue: multiprocessing.Queue = ctx.Queue()
+        result_conn, worker_conn = ctx.Pipe(duplex=False)
         process = ctx.Process(
             target=_regex_compile_worker,
-            args=(fn, args, result_queue),
+            args=(fn, args, worker_conn),
             daemon=True,
         )
-        process.start()
-        process.join(timeout=timeout)
+        try:
+            process.start()
+            # The parent must close its copy so EOF reliably means child exit.
+            worker_conn.close()
 
-        if process.is_alive():
-            pid = process.pid
-            if pid is not None:
-                os.kill(pid, signal.SIGKILL)
+            if not result_conn.poll(timeout):
+                _kill_and_join(process)
+                pattern_str = _pattern_summary(args)
+                raise ValueError(
+                    f"Regex compilation timed out after {timeout}s. "
+                    "The pattern may be too complex or contain constructs that "
+                    "cause exponential state-space explosion (e.g. nested "
+                    f"quantifiers). Pattern: {pattern_str}"
+                ) from None
+
+            try:
+                status, payload = result_conn.recv()
+            except EOFError:
+                process.join(timeout=5)
+                pattern_str = _pattern_summary(args)
+                raise ValueError(
+                    "Regex compilation process produced no result. "
+                    f"Pattern: {pattern_str}"
+                ) from None
+
             process.join(timeout=5)
-            pattern_str = str(args[0])[:200] if args else "<unknown>"
-            raise ValueError(
-                f"Regex compilation timed out after {timeout}s. "
-                "The pattern may be too complex or contain constructs that "
-                "cause exponential state-space explosion (e.g. nested "
-                f"quantifiers). Pattern: {pattern_str}"
-            ) from None
-
-        if process.exitcode != 0:
-            pattern_str = str(args[0])[:200] if args else "<unknown>"
-            raise ValueError(
-                f"Regex compilation process exited with code "
-                f"{process.exitcode}. Pattern: {pattern_str}"
-            ) from None
-
-        if result_queue.empty():
-            pattern_str = str(args[0])[:200] if args else "<unknown>"
-            raise ValueError(
-                f"Regex compilation process produced no result. Pattern: {pattern_str}"
-            ) from None
-
-        status, payload = result_queue.get_nowait()
-        if status == "ok":
-            return payload  # type: ignore[return-value]
-        else:
+            if process.is_alive():
+                _kill_and_join(process)
+                raise RuntimeError("Regex compilation subprocess did not exit")
+            if process.exitcode != 0:
+                pattern_str = _pattern_summary(args)
+                raise ValueError(
+                    f"Regex compilation process exited with code "
+                    f"{process.exitcode}. Pattern: {pattern_str}"
+                ) from None
+            if status == "ok":
+                return payload  # type: ignore[return-value]
             raise payload
+        finally:
+            result_conn.close()
+            worker_conn.close()
+            if process.is_alive():
+                _kill_and_join(process)
     finally:
         semaphore.release()
 
@@ -170,7 +209,7 @@ def _xgr_grammar_from_regex(pattern: str) -> str:
     return xgr.Grammar.from_regex(pattern).serialize_json()
 
 
-def _xgr_compile_regex(tokenizer_info_json: str, pattern: str) -> str:
+def _xgr_compile_regex(pattern: str, tokenizer_info_json: str) -> str:
     """Picklable worker: rebuild compiler in subprocess and compile regex."""
     import xgrammar as xgr
 

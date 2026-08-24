@@ -37,6 +37,11 @@ def _failing_compile(pattern: str) -> str:
     raise RuntimeError("compilation failed")
 
 
+def _large_compile(pattern: str) -> bytes:
+    """Return enough data to fill a pipe if the parent does not drain it."""
+    return pattern.encode() + b"x" * (8 * 1024 * 1024)
+
+
 class TestCompileRegexWithTimeout:
     """Unit tests for the compile_regex_with_timeout utility."""
 
@@ -59,6 +64,12 @@ class TestCompileRegexWithTimeout:
     def test_compilation_error_propagates(self):
         with pytest.raises(RuntimeError, match="compilation failed"):
             compile_regex_with_timeout(_failing_compile, r"bad")
+
+    def test_large_result_does_not_deadlock_child_exit(self):
+        with patch("vllm.envs.VLLM_REGEX_COMPILATION_TIMEOUT_S", 5):
+            result = compile_regex_with_timeout(_large_compile, "large:")
+        assert len(result) == len("large:") + 8 * 1024 * 1024
+        assert result.startswith(b"large:")
 
     def test_pattern_included_in_error_message(self):
         pattern = r"(a+)+b"

@@ -99,8 +99,8 @@ class XgrammarBackend(StructuredOutputBackend):
         elif request_type == StructuredOutputOptions.REGEX:
             serialized = compile_regex_with_timeout(
                 _xgr_compile_regex,
-                self.tokenizer_info_json,
                 grammar_spec,
+                self.tokenizer_info_json,
             )
             ctx = xgr.CompiledGrammar.deserialize_json(serialized, self.tokenizer_info)
         elif request_type == StructuredOutputOptions.STRUCTURAL_TAG:
