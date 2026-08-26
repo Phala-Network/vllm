@@ -1,0 +1,36 @@
+FROM ghcr.io/phala-network/vllm-openai:main-aa9903490-cu130-ubuntu2404-gemma4-pth-toolfix-r15@sha256:fff78ef879c2da985f5515d6ec2b7edbba2d73be4b5ce28abd04067c5b3adbd6
+
+ARG EXPECTED_BASE_GEMMA4_SHA256=962a387b621b5043086ab97c63216ba154efc89efe196d7d5d7465b5d0ebca0e
+ARG EXPECTED_BASE_PARSER_MANAGER_SHA256=3a77693801ffe3fa72a37786b4204535ea0000590266daec70552981d86bb924
+ARG EXPECTED_PATCHED_GEMMA4_SHA256=ff1703d4fa6f71a304e8d7f3ac264118861a52fd543b8087cceb904a8ee0fa5b
+ARG EXPECTED_PATCHED_PARSER_MANAGER_SHA256=296e291ee2f640279faa4dbfc1550286785c9151348c64521d3bacc3b1813336
+
+RUN printf '%s  %s\n%s  %s\n' \
+      "$EXPECTED_BASE_GEMMA4_SHA256" "/usr/local/lib/python3.12/dist-packages/vllm/parser/gemma4.py" \
+      "$EXPECTED_BASE_PARSER_MANAGER_SHA256" "/usr/local/lib/python3.12/dist-packages/vllm/parser/parser_manager.py" \
+    | sha256sum --check --strict
+
+COPY vllm/parser/gemma4.py /tmp/r16/gemma4.py
+COPY vllm/parser/parser_manager.py /tmp/r16/parser_manager.py
+
+RUN printf '%s  %s\n%s  %s\n' \
+      "$EXPECTED_PATCHED_GEMMA4_SHA256" "/tmp/r16/gemma4.py" \
+      "$EXPECTED_PATCHED_PARSER_MANAGER_SHA256" "/tmp/r16/parser_manager.py" \
+    | sha256sum --check --strict \
+    && install -m 0644 /tmp/r16/gemma4.py /usr/local/lib/python3.12/dist-packages/vllm/parser/gemma4.py \
+    && install -m 0644 /tmp/r16/parser_manager.py /usr/local/lib/python3.12/dist-packages/vllm/parser/parser_manager.py \
+    && find /usr/local/lib/python3.12/dist-packages/vllm/parser -type d -name __pycache__ -prune -exec rm -rf '{}' + \
+    && rm -rf /tmp/r16 \
+    && printf '%s  %s\n%s  %s\n' \
+      "$EXPECTED_PATCHED_GEMMA4_SHA256" "/usr/local/lib/python3.12/dist-packages/vllm/parser/gemma4.py" \
+      "$EXPECTED_PATCHED_PARSER_MANAGER_SHA256" "/usr/local/lib/python3.12/dist-packages/vllm/parser/parser_manager.py" \
+    | sha256sum --check --strict
+
+COPY tests/parser/test_gemma4_r16_regressions.py /opt/vllm-r16-tests/test_gemma4_r16_regressions.py
+
+LABEL org.opencontainers.image.title="Phala Gemma4 vLLM r16 protocol repair candidate" \
+      org.opencontainers.image.base.name="ghcr.io/phala-network/vllm-openai:main-aa9903490-cu130-ubuntu2404-gemma4-pth-toolfix-r15" \
+      org.opencontainers.image.base.digest="sha256:fff78ef879c2da985f5515d6ec2b7edbba2d73be4b5ce28abd04067c5b3adbd6" \
+      io.phala.vllm.baseline="9a94dfe0a59b0ca1ea5f98e6adbb61cd43d2c683" \
+      io.phala.vllm.upstream-pr-53657="959563d9b1fece54fc5cf9071362386dd45d1d53" \
+      io.phala.vllm.upstream-pr-52830="91821d2339d8ea7d28b477db3c5bd3449c989e88"
