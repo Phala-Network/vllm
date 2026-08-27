@@ -205,7 +205,13 @@ def test_manager_compiles_with_each_request_selected_backend(monkeypatch):
         def __init__(self, name):
             self.name = name
 
-        def compile_grammar(self, request_type, grammar_spec, stop_token_ids=None):
+        def compile_grammar(
+            self,
+            request_type,
+            grammar_spec,
+            stop_token_ids=None,
+            so_params=None,
+        ):
             return (self.name, request_type, grammar_spec, stop_token_ids)
 
         def destroy(self):

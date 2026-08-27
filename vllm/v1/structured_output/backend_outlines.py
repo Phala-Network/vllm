@@ -14,7 +14,7 @@ import torch
 from regex import escape as regex_escape
 
 from vllm.exceptions import VLLMValidationError
-from vllm.sampling_params import SamplingParams
+from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from vllm.utils.import_utils import LazyLoader
 from vllm.utils.torch_utils import PIN_MEMORY
 from vllm.v1.structured_output.backend_types import (
@@ -78,6 +78,7 @@ class OutlinesBackend(StructuredOutputBackend):
         request_type: StructuredOutputOptions,
         grammar_spec: str,
         stop_token_ids: set[int] | None = None,
+        so_params: StructuredOutputsParams | None = None,
     ) -> StructuredOutputGrammar:
         if request_type == StructuredOutputOptions.JSON:
             regex = json_schema.build_regex_from_schema(grammar_spec)

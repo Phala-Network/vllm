@@ -1944,9 +1944,35 @@ def _postprocess_messages(messages: list[ConversationMessage]) -> None:
 
                 # if arguments is None or empty string, set to {}
                 if content := function.get("arguments"):
-                    if not isinstance(content, (dict, list)):
-                        parsed = json.loads(content)
-                        function["arguments"] = parsed if parsed is not None else {}
+                    if isinstance(content, dict):
+                        parsed = content
+                    else:
+                        if isinstance(content, str):
+                            try:
+                                parsed = json.loads(content)
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    "Tool call %r has arguments that are not valid "
+                                    "JSON (%d chars); coercing to an empty object "
+                                    "so the conversation can continue.",
+                                    function.get("name"),
+                                    len(content),
+                                )
+                                parsed = None
+                        else:
+                            parsed = content
+
+                        if not isinstance(parsed, dict):
+                            if parsed is not None:
+                                logger.warning(
+                                    "Tool call %r arguments decoded to %s, not a "
+                                    "JSON object; coercing to an empty object.",
+                                    function.get("name"),
+                                    type(parsed).__name__,
+                                )
+                            parsed = {}
+
+                    function["arguments"] = parsed
                 else:
                     function["arguments"] = {}
 

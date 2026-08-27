@@ -12,7 +12,7 @@ from transformers import MistralCommonBackend
 
 from vllm.exceptions import VLLMValidationError
 from vllm.logger import init_logger
-from vllm.sampling_params import SamplingParams
+from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from vllm.utils.import_utils import LazyLoader
 from vllm.utils.mistral import is_mistral_tokenizer
 from vllm.v1.structured_output.backend_types import (
@@ -118,12 +118,19 @@ class GuidanceBackend(StructuredOutputBackend):
         request_type: StructuredOutputOptions,
         grammar_spec: str,
         stop_token_ids: set[int] | None = None,
+        so_params: StructuredOutputsParams | None = None,
     ) -> StructuredOutputGrammar:
+        disable_any_whitespace = self.disable_any_whitespace or (
+            so_params is not None and so_params.disable_any_whitespace
+        )
+        disable_additional_properties = self.disable_additional_properties or (
+            so_params is not None and so_params.disable_additional_properties
+        )
         self.serialized_grammar = serialize_guidance_grammar(
             request_type,
             grammar_spec,
-            self.disable_any_whitespace,
-            self.disable_additional_properties,
+            disable_any_whitespace,
+            disable_additional_properties,
         )
 
         ll_matcher = llguidance.LLMatcher(

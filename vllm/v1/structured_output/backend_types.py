@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     import torch
 
     from vllm.config import VllmConfig
+    from vllm.sampling_params import StructuredOutputsParams
     from vllm.tokenizers import TokenizerLike
 else:
     VllmConfig = object
@@ -109,6 +110,7 @@ class StructuredOutputBackend(ABC):
         request_type: StructuredOutputOptions,
         grammar_spec: str,
         stop_token_ids: set[int] | None = None,
+        so_params: "StructuredOutputsParams | None" = None,
     ) -> StructuredOutputGrammar:
         """
         Compiles a grammar specification into a structured output grammar.
@@ -120,6 +122,8 @@ class StructuredOutputBackend(ABC):
             stop_token_ids (set[int] | None): The request's EOS and user
                 stop-token ids (``SamplingParams.all_stop_token_ids``), masked
                 until the grammar terminates.
+            so_params (StructuredOutputsParams | None): Request-level backend
+                compilation options.
 
         Returns:
             StructuredOutputGrammar: The compiled structured output grammar.

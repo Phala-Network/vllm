@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import copy
 import itertools
 import multiprocessing
 from collections.abc import Iterable, Sequence
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.reasoning import ReasoningParserManager
-from vllm.tokenizers import cached_tokenizer_from_config
+from vllm.tokenizers import cached_tokenizer_from_config, maybe_make_thread_pool
 from vllm.utils.import_utils import LazyLoader
 from vllm.v1.structured_output.backend_guidance import GuidanceBackend
 from vllm.v1.structured_output.backend_types import (
@@ -86,6 +87,9 @@ class StructuredOutputManager:
             self.tokenizer = cached_tokenizer_from_config(
                 model_config=self.vllm_config.model_config
             )
+            assert self.tokenizer is not None
+            self.tokenizer = copy.copy(self.tokenizer)
+            maybe_make_thread_pool(self.tokenizer, max_workers + 1)
             reasoning_parser_plugin = (
                 self.vllm_config.structured_outputs_config.reasoning_parser_plugin
             )
@@ -217,7 +221,10 @@ class StructuredOutputManager:
                 else None
             )
             return backend.compile_grammar(
-                request_type, grammar_spec, stop_token_ids=stop_token_ids
+                request_type,
+                grammar_spec,
+                stop_token_ids=stop_token_ids,
+                so_params=struct_request.params,
             )
         except Exception:
             logger.exception(

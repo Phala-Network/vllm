@@ -160,3 +160,43 @@ def test_auto_backend_falls_back_on_unsupported_schema(schema, expected_backend)
         tokenizer=object(),
     )
     assert params.structured_outputs._backend == expected_backend
+
+
+def test_disable_any_whitespace_allows_auto_supported_backend():
+    config = StructuredOutputsConfig(
+        backend="auto",
+        disable_any_whitespace=True,
+    )
+    params = SamplingParams(
+        structured_outputs=StructuredOutputsParams(json=JSON_SCHEMA)
+    )
+
+    params._validate_structured_outputs(
+        _StubModelConfig(is_diffusion=False),
+        config,
+        tokenizer=object(),
+    )
+
+    assert params.structured_outputs._backend == "xgrammar"
+
+
+def test_disable_any_whitespace_rejects_auto_unsupported_fallback():
+    config = StructuredOutputsConfig(
+        backend="auto",
+        disable_any_whitespace=True,
+    )
+    params = SamplingParams(
+        structured_outputs=StructuredOutputsParams(
+            json={
+                "type": "object",
+                "patternProperties": {"^item_": {"type": "string"}},
+            }
+        )
+    )
+
+    with pytest.raises(VLLMValidationError, match="disable_any_whitespace"):
+        params._validate_structured_outputs(
+            _StubModelConfig(is_diffusion=False),
+            config,
+            tokenizer=object(),
+        )

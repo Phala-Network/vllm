@@ -1,0 +1,10 @@
+55832e9ad0295dc27a065e578c53a56729b6ff12a8910c87430d5612f3d91bcc  /tmp/vllm-r17/vllm/config/structured_outputs.py
+07c10b8a59d2c8fe0f6d0a62d17f61e612167c6a8c82d8277d3c612d105f87e6  /tmp/vllm-r17/vllm/entrypoints/chat_utils.py
+0b57a5e15bab19cab4bcce7814f65e2c186b4d35be55e37367ee4d9846ae0937  /tmp/vllm-r17/vllm/parser/gemma4.py
+ab6733fc86f8976d7fcd2b677cb42411d1c262f357092a3f04b37762604e7499  /tmp/vllm-r17/vllm/sampling_params.py
+13416669dc0ba41a55337ceae5a9fe29bec3f81d664445b1bd4a32cc1c03fec2  /tmp/vllm-r17/vllm/v1/structured_output/__init__.py
+abe4fcb9ec80d1811b1615beed83e9cb391e8df4a86d23b13eed736f59c41adf  /tmp/vllm-r17/vllm/v1/structured_output/backend_guidance.py
+7c35895c86ff9ba2a019745e6c8aafb226a0df065ba6d80e240e40f7dcb889d1  /tmp/vllm-r17/vllm/v1/structured_output/backend_lm_format_enforcer.py
+e986f835b044a95a519302649b7210d2b03994fb012a9a46b742928ca4fe9744  /tmp/vllm-r17/vllm/v1/structured_output/backend_outlines.py
+7a4f8ed70a5b67e9ecf94d5cfe4ac022c5181640b05c0517e6fae8ee201c86d5  /tmp/vllm-r17/vllm/v1/structured_output/backend_types.py
+6d5262948c95c9ecf395f87edfd96ce4ec750c5d21330e460454ef79d52db828  /tmp/vllm-r17/vllm/v1/structured_output/backend_xgrammar.py

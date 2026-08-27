@@ -12,6 +12,7 @@ state machine::
 
 from __future__ import annotations
 
+import ast
 import functools
 import json
 from collections.abc import Sequence
@@ -41,6 +42,8 @@ TOOL_CALL_START = "<|tool_call>"
 TOOL_CALL_END = "<tool_call|>"
 STRING_DELIM = '<|"|>'
 _DELIM_LEN = len(STRING_DELIM)
+_KEY_SEPARATORS = (":", "=")
+_MAX_GEMMA4_NESTING_DEPTH = 128
 
 logger = init_logger(__name__)
 
@@ -65,6 +68,85 @@ def _strip_partial_delim(value: str) -> str:
     return value
 
 
+def _decode_literal(raw: str, quote: str) -> str:
+    """Decode a complete JSON or Python string literal."""
+    decoders = (json.loads, ast.literal_eval) if quote == '"' else (ast.literal_eval,)
+    for decode in decoders:
+        try:
+            decoded = decode(raw)
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if isinstance(decoded, str):
+            return decoded
+    return raw[1:-1]
+
+
+def _read_fallback_string(src: str, i: int) -> tuple[str, int] | None:
+    """Read a complete JSON or Python string literal at ``src[i]``."""
+    quote = src[i]
+    if quote not in ('"', "'"):
+        return None
+
+    j = i + 1
+    while j < len(src):
+        char = src[j]
+        if char == "\\" and j + 1 < len(src):
+            j += 2
+            continue
+        if char == quote:
+            return _decode_literal(src[i : j + 1], quote), j + 1
+        j += 1
+    return None
+
+
+def _skip_fallback_literal(src: str, i: int) -> int | None:
+    literal = _read_fallback_string(src, i)
+    return None if literal is None else literal[1]
+
+
+def _next_gemma4_nesting_depth(depth: int) -> int:
+    next_depth = depth + 1
+    if next_depth > _MAX_GEMMA4_NESTING_DEPTH:
+        raise ValueError(
+            "Gemma4 tool arguments exceed the maximum nesting depth "
+            f"of {_MAX_GEMMA4_NESTING_DEPTH}"
+        )
+    return next_depth
+
+
+def _validate_gemma4_nesting_depth(src: str) -> None:
+    """Reject deeply nested containers before recursive parsing begins."""
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    i = 0
+    while i < len(src):
+        char = src[i]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            i += 1
+            continue
+
+        if src.startswith(STRING_DELIM, i):
+            end = src.find(STRING_DELIM, i + _DELIM_LEN)
+            if end == -1:
+                return
+            i = end + _DELIM_LEN
+            continue
+        if char in ('"', "'"):
+            quote = char
+        elif char in "{[":
+            depth = _next_gemma4_nesting_depth(depth)
+        elif char in "}]" and depth:
+            depth -= 1
+        i += 1
+
+
 def _parse_gemma4_value(value_str: str) -> object:
     """Parse a single Gemma4 bare value into a Python object."""
     value_str = value_str.strip()
@@ -85,7 +167,12 @@ def _parse_gemma4_value(value_str: str) -> object:
     return value_str
 
 
-def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
+def _parse_gemma4_args(
+    args_str: str,
+    *,
+    partial: bool = False,
+    _depth: int = 0,
+) -> dict:
     """Parse Gemma4's custom key:value format into a Python dict.
 
     Format examples::
@@ -106,6 +193,8 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
     """
     if not args_str or not args_str.strip():
         return {}
+    if _depth == 0:
+        _validate_gemma4_nesting_depth(args_str)
 
     result: dict = {}
     i = 0
@@ -117,14 +206,30 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
         if i >= n:
             break
 
-        key_start = i
-        while i < n and args_str[i] != ":":
-            i += 1
-        if i >= n:
-            break
-        key = args_str[key_start:i].strip()
-        if key.startswith(STRING_DELIM) and key.endswith(STRING_DELIM):
-            key = key[_DELIM_LEN:-_DELIM_LEN]
+        key = None
+        if args_str[i : i + _DELIM_LEN] == STRING_DELIM:
+            key_end = args_str.find(STRING_DELIM, i + _DELIM_LEN)
+            if key_end == -1:
+                break
+            key = args_str[i + _DELIM_LEN : key_end]
+            i = key_end + _DELIM_LEN
+        else:
+            key_literal = _read_fallback_string(args_str, i)
+            if key_literal is not None:
+                key, i = key_literal
+
+        if key is not None:
+            while i < n and args_str[i] in (" ", "\n", "\t"):
+                i += 1
+            if i >= n or args_str[i] not in _KEY_SEPARATORS:
+                break
+        else:
+            key_start = i
+            while i < n and args_str[i] not in _KEY_SEPARATORS:
+                i += 1
+            if i >= n:
+                break
+            key = args_str[key_start:i].strip()
         i += 1
 
         if i >= n:
@@ -154,6 +259,7 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
             i = end_pos + _DELIM_LEN
 
         elif args_str[i] == "{":
+            child_depth = _next_gemma4_nesting_depth(_depth)
             depth = 1
             obj_start = i + 1
             i += 1
@@ -164,6 +270,11 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
                     next_delim = args_str.find(STRING_DELIM, i)
                     i = n if next_delim == -1 else next_delim + _DELIM_LEN
                     continue
+                if args_str[i] in ('"', "'"):
+                    after = _skip_fallback_literal(args_str, i)
+                    if after is not None:
+                        i = after
+                        continue
                 if args_str[i] == "{":
                     depth += 1
                 elif args_str[i] == "}":
@@ -172,11 +283,16 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
             if depth > 0:
                 # Incomplete nested object — use i (not i-1) to avoid
                 # dropping the last char, and recurse as partial.
-                result[key] = _parse_gemma4_args(args_str[obj_start:i], partial=True)
+                result[key] = _parse_gemma4_args(
+                    args_str[obj_start:i], partial=True, _depth=child_depth
+                )
             else:
-                result[key] = _parse_gemma4_args(args_str[obj_start : i - 1])
+                result[key] = _parse_gemma4_args(
+                    args_str[obj_start : i - 1], _depth=child_depth
+                )
 
         elif args_str[i] == "[":
+            child_depth = _next_gemma4_nesting_depth(_depth)
             depth = 1
             arr_start = i + 1
             i += 1
@@ -186,17 +302,31 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
                     next_delim = args_str.find(STRING_DELIM, i)
                     i = n if next_delim == -1 else next_delim + _DELIM_LEN
                     continue
+                if args_str[i] in ('"', "'"):
+                    after = _skip_fallback_literal(args_str, i)
+                    if after is not None:
+                        i = after
+                        continue
                 if args_str[i] == "[":
                     depth += 1
                 elif args_str[i] == "]":
                     depth -= 1
                 i += 1
             if depth > 0:
-                result[key] = _parse_gemma4_array(args_str[arr_start:i], partial=True)
+                result[key] = _parse_gemma4_array(
+                    args_str[arr_start:i], partial=True, _depth=child_depth
+                )
             else:
-                result[key] = _parse_gemma4_array(args_str[arr_start : i - 1])
+                result[key] = _parse_gemma4_array(
+                    args_str[arr_start : i - 1], _depth=child_depth
+                )
 
         else:
+            literal = _read_fallback_string(args_str, i)
+            if literal is not None:
+                value, i = literal
+                result[key] = value
+                continue
             val_start = i
             while i < n and args_str[i] not in (",", "}", "]"):
                 i += 1
@@ -221,7 +351,14 @@ def _parse_gemma4_args(args_str: str, *, partial: bool = False) -> dict:
     return result
 
 
-def _parse_gemma4_array(arr_str: str, *, partial: bool = False) -> list:
+def _parse_gemma4_array(
+    arr_str: str,
+    *,
+    partial: bool = False,
+    _depth: int = 0,
+) -> list:
+    if _depth == 0:
+        _validate_gemma4_nesting_depth(arr_str)
     items: list = []
     i = 0
     n = len(arr_str)
@@ -242,6 +379,7 @@ def _parse_gemma4_array(arr_str: str, *, partial: bool = False) -> list:
             i = end_pos + _DELIM_LEN
 
         elif arr_str[i] == "{":
+            child_depth = _next_gemma4_nesting_depth(_depth)
             depth = 1
             obj_start = i + 1
             i += 1
@@ -251,17 +389,29 @@ def _parse_gemma4_array(arr_str: str, *, partial: bool = False) -> list:
                     nd = arr_str.find(STRING_DELIM, i)
                     i = nd + _DELIM_LEN if nd != -1 else n
                     continue
+                if arr_str[i] in ('"', "'"):
+                    after = _skip_fallback_literal(arr_str, i)
+                    if after is not None:
+                        i = after
+                        continue
                 if arr_str[i] == "{":
                     depth += 1
                 elif arr_str[i] == "}":
                     depth -= 1
                 i += 1
             if depth > 0:
-                items.append(_parse_gemma4_args(arr_str[obj_start:i], partial=True))
+                items.append(
+                    _parse_gemma4_args(
+                        arr_str[obj_start:i], partial=True, _depth=child_depth
+                    )
+                )
             else:
-                items.append(_parse_gemma4_args(arr_str[obj_start : i - 1]))
+                items.append(
+                    _parse_gemma4_args(arr_str[obj_start : i - 1], _depth=child_depth)
+                )
 
         elif arr_str[i] == "[":
+            child_depth = _next_gemma4_nesting_depth(_depth)
             depth = 1
             sub_start = i + 1
             i += 1
@@ -271,17 +421,33 @@ def _parse_gemma4_array(arr_str: str, *, partial: bool = False) -> list:
                     nd = arr_str.find(STRING_DELIM, i)
                     i = nd + _DELIM_LEN if nd != -1 else n
                     continue
+                if arr_str[i] in ('"', "'"):
+                    after = _skip_fallback_literal(arr_str, i)
+                    if after is not None:
+                        i = after
+                        continue
                 if arr_str[i] == "[":
                     depth += 1
                 elif arr_str[i] == "]":
                     depth -= 1
                 i += 1
             if depth > 0:
-                items.append(_parse_gemma4_array(arr_str[sub_start:i], partial=True))
+                items.append(
+                    _parse_gemma4_array(
+                        arr_str[sub_start:i], partial=True, _depth=child_depth
+                    )
+                )
             else:
-                items.append(_parse_gemma4_array(arr_str[sub_start : i - 1]))
+                items.append(
+                    _parse_gemma4_array(arr_str[sub_start : i - 1], _depth=child_depth)
+                )
 
         else:
+            literal = _read_fallback_string(arr_str, i)
+            if literal is not None:
+                value, i = literal
+                items.append(value)
+                continue
             val_start = i
             while i < n and arr_str[i] not in (",", "]"):
                 i += 1
@@ -302,11 +468,16 @@ def _parse_gemma4_array(arr_str: str, *, partial: bool = False) -> list:
     return items
 
 
-def _gemma4_arg_converter(raw_args: str, partial: bool) -> str:
-    """Convert Gemma4 custom arg format to a JSON string."""
+def _normalize_gemma4_args(raw_args: str) -> str:
     text = raw_args.strip()
     if text.endswith("}") or text.endswith(")") and text.count("(") < text.count(")"):
         text = text[:-1]
+    return text
+
+
+def _gemma4_arg_converter(raw_args: str, partial: bool) -> str:
+    """Convert Gemma4 custom arg format to a JSON string."""
+    text = _normalize_gemma4_args(raw_args)
 
     parsed = _parse_gemma4_args(text, partial=partial)
     return json.dumps(parsed, ensure_ascii=False)
@@ -325,6 +496,7 @@ def gemma4_config() -> ParserEngineConfig:
             "CALL_PREFIX": "call:",
             "OPEN_BRACE": "{",
             "OPEN_PAREN": "(",
+            "COLON": ":",
         },
         token_id_terminals={
             "THINK_START": CHANNEL_START,
@@ -368,6 +540,10 @@ def gemma4_config() -> ParserEngineConfig:
                 ParserState.TOOL_NAME,
                 (),
             ),
+            (ParserState.TOOL_PREAMBLE, "COLON"): Transition(
+                ParserState.TOOL_NAME,
+                (),
+            ),
             (ParserState.TOOL_NAME, "OPEN_BRACE"): Transition(
                 ParserState.TOOL_ARGS,
                 (),
@@ -404,7 +580,7 @@ def gemma4_config() -> ParserEngineConfig:
         },
         arg_converter=_gemma4_arg_converter,
         tool_args_json=False,
-        arg_structural_chars=frozenset(",:{}[]<"),
+        arg_structural_chars=frozenset(",=:{}[]<"),
         preserve_tokens=frozenset({STRING_DELIM}),
     )
 
@@ -615,7 +791,22 @@ class Gemma4Parser(ParserEngine):
                 continue
 
             if event.value == TOOL_CALL_END:
-                forwarded.extend(pending)
+                raw_args = "".join(
+                    item.value
+                    for item in pending
+                    if item.type == EventType.ARG_VALUE_CHUNK
+                )
+                try:
+                    _validate_gemma4_nesting_depth(_normalize_gemma4_args(raw_args))
+                except ValueError:
+                    logger.warning(
+                        "Dropping Gemma4 tool call %d because its arguments "
+                        "exceed the maximum nesting depth of %d",
+                        event.tool_index,
+                        _MAX_GEMMA4_NESTING_DEPTH,
+                    )
+                else:
+                    forwarded.extend(pending)
             self._pending_tool_events.pop(event.tool_index, None)
 
         return forwarded

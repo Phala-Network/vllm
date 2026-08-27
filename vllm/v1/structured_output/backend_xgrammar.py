@@ -10,7 +10,7 @@ import torch
 import vllm.envs
 from vllm.exceptions import VLLMValidationError
 from vllm.logger import init_logger
-from vllm.sampling_params import SamplingParams
+from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from vllm.utils.import_utils import LazyLoader
 from vllm.utils.mistral import is_mistral_tokenizer
 from vllm.v1.structured_output.backend_types import (
@@ -85,14 +85,18 @@ class XgrammarBackend(StructuredOutputBackend):
         request_type: StructuredOutputOptions,
         grammar_spec: str,
         stop_token_ids: set[int] | None = None,
+        so_params: StructuredOutputsParams | None = None,
     ) -> StructuredOutputGrammar:
+        disable_any_whitespace = self.disable_any_whitespace or (
+            so_params is not None and so_params.disable_any_whitespace
+        )
         if request_type == StructuredOutputOptions.JSON:
             ctx = self.compiler.compile_json_schema(
-                grammar_spec, any_whitespace=not self.disable_any_whitespace
+                grammar_spec, any_whitespace=not disable_any_whitespace
             )
         elif request_type == StructuredOutputOptions.JSON_OBJECT:
             ctx = self.compiler.compile_json_schema(
-                '{"type": "object"}', any_whitespace=not self.disable_any_whitespace
+                '{"type": "object"}', any_whitespace=not disable_any_whitespace
             )
         elif request_type == StructuredOutputOptions.GRAMMAR:
             ctx = self.compiler.compile_grammar(grammar_spec)
@@ -242,6 +246,16 @@ STRING_SUPPORTED_FORMATS = {
 }
 
 
+def _types_of(obj: dict[str, Any]) -> set[str]:
+    """Normalize a JSON Schema scalar or list ``type`` to a set."""
+    schema_type = obj.get("type")
+    if isinstance(schema_type, str):
+        return {schema_type}
+    if isinstance(schema_type, list):
+        return {item for item in schema_type if isinstance(item, str)}
+    return set()
+
+
 def has_xgrammar_unsupported_json_features(schema: dict[str, Any]) -> bool:
     """Check if JSON schema contains features unsupported by xgrammar."""
 
@@ -249,12 +263,14 @@ def has_xgrammar_unsupported_json_features(schema: dict[str, Any]) -> bool:
         if not isinstance(obj, dict):
             return False
 
+        types = _types_of(obj)
+
         # Check for numeric ranges
-        if obj.get("type") in ("integer", "number") and ("multipleOf" in obj):
+        if types & {"integer", "number"} and "multipleOf" in obj:
             return True
 
         # Check for array unsupported keywords
-        if obj.get("type") == "array" and any(
+        if "array" in types and any(
             key in obj
             for key in ("uniqueItems", "contains", "minContains", "maxContains")
         ):
@@ -262,14 +278,14 @@ def has_xgrammar_unsupported_json_features(schema: dict[str, Any]) -> bool:
 
         # Unsupported keywords for strings
         if (
-            obj.get("type") == "string"
+            "string" in types
             and "format" in obj
             and obj["format"] not in STRING_SUPPORTED_FORMATS
         ):
             return True
 
         # Unsupported keywords for objects
-        if obj.get("type") == "object" and any(
+        if "object" in types and any(
             key in obj for key in ("patternProperties", "propertyNames")
         ):
             return True

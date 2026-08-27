@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Sampling parameters for text generation."""
 
+import contextlib
 import copy
 import json as json_mod
 import math
@@ -1015,6 +1016,20 @@ class SamplingParams(
             raise VLLMValidationError(
                 "structured_outputs.grammar cannot be an empty string"
             )
+        if (
+            isinstance(self.structured_outputs.regex, str)
+            and self.structured_outputs.regex.strip() == ""
+        ):
+            raise VLLMValidationError(
+                "structured_outputs.regex cannot be an empty string"
+            )
+        if (
+            isinstance(self.structured_outputs.structural_tag, str)
+            and self.structured_outputs.structural_tag.strip() == ""
+        ):
+            raise VLLMValidationError(
+                "structured_outputs.structural_tag cannot be an empty string"
+            )
         # Reject empty string json schema early to avoid engine-side crashes
         if (
             isinstance(self.structured_outputs.json, str)
@@ -1022,6 +1037,16 @@ class SamplingParams(
         ):
             raise VLLMValidationError(
                 "structured_outputs.json cannot be an empty string"
+            )
+        json_schema = self.structured_outputs.json
+        if isinstance(json_schema, str):
+            with contextlib.suppress(json_mod.JSONDecodeError):
+                json_schema = json_mod.loads(json_schema)
+        if json_schema == {}:
+            raise VLLMValidationError(
+                "structured_outputs.json cannot be an empty JSON schema; "
+                "provide a non-empty schema, or use json_object=True when "
+                "JSON object output is intended"
             )
         # Reject json_object=False early to avoid engine-side crashes
         if self.structured_outputs.json_object is False:
@@ -1127,6 +1152,15 @@ class SamplingParams(
                     self.structured_outputs._backend = "guidance"
             # Remember that this backend was set automatically
             self.structured_outputs._backend_was_auto = True
+
+        if (
+            structured_outputs_config.disable_any_whitespace
+            or self.structured_outputs.disable_any_whitespace
+        ) and self.structured_outputs._backend not in ("xgrammar", "guidance"):
+            raise VLLMValidationError(
+                "disable_any_whitespace is only supported for "
+                "xgrammar and guidance backends."
+            )
 
         # Run post-init validation. This is also important to ensure subsequent
         # roundtrip serialization/deserialization won't fail.

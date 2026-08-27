@@ -14,6 +14,7 @@ import pytest
 from transformers import AutoTokenizer
 
 from vllm.config import StructuredOutputsConfig, VllmConfig
+from vllm.sampling_params import StructuredOutputsParams
 from vllm.v1.structured_output.backend_types import StructuredOutputOptions
 from vllm.v1.structured_output.backend_xgrammar import XgrammarBackend
 
@@ -80,3 +81,33 @@ def test_request_stop_tokens_gated_to_grammar_terminal(backend: XgrammarBackend)
     assert _token_allowed(bm_override[0], LETTER)
     assert _token_allowed(bm_default[0], EOS)
     assert _token_allowed(bm_override[0], EOS)
+
+
+@pytest.mark.parametrize("compact_first", [False, True])
+def test_request_disable_any_whitespace_is_honored_and_cache_safe(
+    backend: XgrammarBackend,
+    compact_first: bool,
+):
+    schema = (
+        '{"type":"object","properties":{"a":{"type":"string"}},'
+        '"required":["a"],"additionalProperties":false}'
+    )
+    tokenizer = backend.tokenizer
+    options = [compact_first, not compact_first]
+    grammars = {}
+
+    for compact in options:
+        grammars[compact] = backend.compile_grammar(
+            StructuredOutputOptions.JSON,
+            schema,
+            so_params=StructuredOutputsParams(
+                json=schema,
+                disable_any_whitespace=compact,
+            ),
+        )
+
+    spaced = tokenizer.encode('{ "a": "b" }')
+    canonical = tokenizer.encode('{"a": "b"}')
+    assert grammars[False].validate_tokens(spaced) == spaced
+    assert grammars[True].validate_tokens(spaced) != spaced
+    assert grammars[True].validate_tokens(canonical) == canonical
