@@ -1,0 +1,52 @@
+{
+  "base_image": "vllm/vllm-openai:v0.31.0@sha256:a4a4c0437bf7240089da5f08aa370c4aee17ae5290f7a3b468825ee26c4c3a6b",
+  "image_id": "sha256:de2682ee592e37b53e11e15732ab5710f2360a437387d6499d225d0ff9d92311",
+  "completed_utc": "2026-10-08T04:33:36.576398+00:00",
+  "build_context_sha256": "b178c3b39831d4b2ab267c58ce3d984f72df243b72a9cd379a088eb86dd8d7e5",
+  "source_sha256": {
+    "Dockerfile": "c0322684e49d7aabd32b19927be0910907219f54353f16208b46b01fe957f5dc",
+    "manifest.json": "467c7d268566badec25c211bd284aa3406bcbb045d889ec55932a914508522e5",
+    "install_view.py": "a3e325d468b297923b9734dbc5f9be05963bb1591489a3ec4f1f39e7d149a353",
+    "cpu_check.py": "b328999bd8fc565c4b0272b8d1f48827532b949b353d2e261c1029a796c05bc9",
+    "layout_audit.py": "72886286d36324ebd80f804fcc47e0efa6f75a279167edfe2757dec68f8d70d0",
+    "patch_layout.py": "a3eafc45b52b063479b4ffd2fdf1866abb8fee11f322ac68d1b395700cc2255b",
+    "layout_fixture.py": "d1863628300c56764458b2d6c046c6d45b5f219e2caffaf36ee8eb4fb21863f7"
+  },
+  "layout_patch": {
+    "upstream_sha256": "a8fdf8179b8518510d6be7be12c0ba066aed7d6aa0e11a371d02880ce772a4f0",
+    "patched_sha256": "997875622fea2cc6ce573fc47b3f8f1d7ac4c8cf02d2eccaa5c41028aea31b22",
+    "helper_sha256": "72886286d36324ebd80f804fcc47e0efa6f75a279167edfe2757dec68f8d70d0",
+    "scope": "single registration-time metadata log before transfer threads; no transfer changes"
+  },
+  "checks": [
+    {
+      "name": "build",
+      "exit_code": 0
+    },
+    {
+      "name": "image-inspect",
+      "exit_code": 0
+    },
+    {
+      "name": "hf-help",
+      "exit_code": 0
+    },
+    {
+      "name": "hf-download-help",
+      "exit_code": 0
+    },
+    {
+      "name": "cpu-check",
+      "exit_code": 0
+    },
+    {
+      "name": "layout-fixture",
+      "exit_code": 0
+    },
+    {
+      "name": "layout-patch-receipt",
+      "exit_code": 0
+    }
+  ],
+  "provenance": "Retrospective archive of verified historical build inputs; not a claim that the original build used this later Git commit."
+}
